@@ -20,12 +20,13 @@ import {
   TRANSCRIPT_WINDOW_SIZE,
   expandWindowStart,
   focusWindowRange,
+  followWindowStart,
   resolveTranscriptWindow,
   tailWindowStart,
 } from "@/lib/transcript-window";
 import { useStore } from "@/state/store";
 
-export function useTranscriptViewport<T extends { id: string }>({
+export function useTranscriptViewport<T extends { id: string; role?: string }>({
   ownerId,
   threadId,
   messages,
@@ -61,8 +62,10 @@ export function useTranscriptViewport<T extends { id: string }>({
   // full threads DOM-heavy). The boundary is per owner+thread; a render-phase
   // reset re-tails it on switch so the old thread's boundary never flashes
   // into the new one. While the reader follows the bottom, the boundary
-  // slides with new rows so the window stays one window long; it holds still
-  // only once they have scrolled away, so the rows they are reading stay put.
+  // slides with new rows so the window stays one window long, but never past
+  // the person's newest message: the question and the turn answering it stay
+  // mounted however many hidden tool steps that turn adds. The boundary holds
+  // still once they have scrolled away, so the rows they are reading stay put.
   // Callers derive everything else (last reply, working dots) from the FULL
   // list.
   const transcriptKey = `${ownerId}:${threadId}`;
@@ -76,10 +79,10 @@ export function useTranscriptViewport<T extends { id: string }>({
     start: tailStart,
     end: null,
   }));
-  if (transcriptWindow.key !== transcriptKey) {
-    setTranscriptWindow({ key: transcriptKey, start: tailStart, end: null });
-  } else if (follow && transcriptWindow.end === null && transcriptWindow.start < tailStart) {
-    setTranscriptWindow({ ...transcriptWindow, start: tailStart });
+  const switched = transcriptWindow.key !== transcriptKey;
+  const followStart = followWindowStart(messages);
+  if (switched || (follow && transcriptWindow.end === null && transcriptWindow.start < followStart)) {
+    setTranscriptWindow({ key: transcriptKey, start: switched ? tailStart : followStart, end: null });
   }
   const {
     visible: windowedMessages,
@@ -193,7 +196,7 @@ export function useTranscriptViewport<T extends { id: string }>({
   };
   const jumpToLatest = () => {
     setBottomFollow(true);
-    setTranscriptWindow({ key: transcriptKey, start: tailWindowStart(messages.length), end: null });
+    setTranscriptWindow({ key: transcriptKey, start: tailStart, end: null });
     requestAnimationFrame(() => {
       scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight, behavior: "smooth" });
     });

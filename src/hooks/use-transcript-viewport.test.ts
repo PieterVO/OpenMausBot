@@ -88,7 +88,7 @@ vi.mock("@/lib/focus-message", () => ({ useFocusMessage: () => {} }));
 
 import { useTranscriptViewport } from "./use-transcript-viewport";
 
-type Row = { id: string };
+type Row = { id: string; role?: "user" | "bot" };
 const rows = (count: number, from = 0): Row[] => Array.from({ length: count }, (_, index) => ({ id: `m${from + index}` }));
 
 const ROW = 50;
@@ -247,7 +247,9 @@ describe("transcript viewport", () => {
     view.act(() => view.current.showEarlier());
     expect(view.current.hiddenCount).toBe(60);
 
-    view.rerender({ threadId: "other", messages: rows(300, 1_000) });
+    // opening a thread mounts one window, even when the person last wrote
+    // long before its end
+    view.rerender({ threadId: "other", messages: [{ id: "ask", role: "user" }, ...rows(299, 1_001)] });
     expect(view.current.transcriptKey).toBe("bot:other");
     expect(view.current.hiddenCount).toBe(180);
     expect(view.current.windowedMessages[0]?.id).toBe("m1180");
@@ -264,6 +266,35 @@ describe("transcript viewport", () => {
     expect(view.current.windowedMessages[0]?.id).toBe("m780");
     expect(view.current.windowedMessages.at(-1)?.id).toBe("m899");
     expect(view.current.hiddenCount).toBe(780);
+  });
+
+  it("keeps the person's newest message mounted while a long turn follows it", () => {
+    // tool steps draw nothing by default, so a turn can add far more rows
+    // than the window holds while the question is still all there is to see
+    let thread: Row[] = [...rows(30), { id: "ask", role: "user" }];
+    const view = mount({ messages: thread });
+    for (let step = 0; step < 150; step++) {
+      thread = [...thread, { id: `step${step}`, role: "bot" }];
+      view.rerender({ messages: thread });
+      expect(view.current.windowedMessages.map((row) => row.id)).toContain("ask");
+      expect(scroller.scrollTop).toBe(scroller.bottom);
+    }
+    expect(view.current.windowedMessages[0]?.id).toBe("ask");
+    expect(view.current.windowedMessages).toHaveLength(151);
+
+    // the next message ends that turn's hold, and the window is one window again
+    view.rerender({ messages: [...thread, { id: "ask2", role: "user" }] });
+    expect(view.current.windowedMessages).toHaveLength(120);
+    expect(view.current.windowedMessages.at(-1)?.id).toBe("ask2");
+  });
+
+  it("keeps the person's newest message mounted when many steps arrive at once", () => {
+    const asked: Row[] = [...rows(30), { id: "ask", role: "user" }];
+    const view = mount({ messages: asked });
+    // a reconnect catching up delivers the turn's steps in one update
+    view.rerender({ messages: [...asked, ...rows(150, 100)] });
+    expect(view.current.windowedMessages[0]?.id).toBe("ask");
+    expect(scroller.scrollTop).toBe(scroller.bottom);
   });
 
   it("holds the reader's rows and grows the window once they have scrolled away", () => {
