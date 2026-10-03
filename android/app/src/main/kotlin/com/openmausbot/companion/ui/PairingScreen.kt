@@ -447,14 +447,17 @@ internal enum class PairingFailureDisposition {
 }
 
 /**
- * Route ambiguity, retryable server refusals, and a server address that never
- * received the code keep the same logical request alive.
+ * Route ambiguity, retryable server refusals, and a server that could not be
+ * reached keep the same logical request alive. An address that answered and is
+ * not a server clears the code like any other refusal, as iOS does: the code was
+ * for a different address.
  */
 internal fun pairingFailureDisposition(
     error: Throwable,
     cameFromScanner: Boolean,
 ): PairingFailureDisposition = when {
-    error is PairingRouteError || error is ServerPairingRetryError || error is ServerAddressError ->
+    error is PairingRouteError || error is ServerPairingRetryError ||
+        (error is ServerAddressError && !error.notAServer) ->
         PairingFailureDisposition.RETAIN_ATTEMPT
     cameFromScanner -> PairingFailureDisposition.DROP_SCANNED_ATTEMPT
     else -> PairingFailureDisposition.RESET_TYPED_ATTEMPT

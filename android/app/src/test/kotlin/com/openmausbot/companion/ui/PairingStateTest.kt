@@ -557,21 +557,31 @@ class PairingFailureDispositionTest {
     }
 
     @Test
-    fun `a server address that never received the code retains either kind of attempt`() {
+    fun `an unreachable server keeps either kind of attempt for a retry`() {
         val unreachable = ServerAddressError.unreachable(
             "https://mini.example",
             "mini.example",
             java.io.IOException("Failed to connect"),
         )
-        val notAServer = ServerAddressError.notAServer("https://mini.example", java.io.IOException("404"))
-        for (error in listOf(unreachable, notAServer)) {
-            for (cameFromScanner in listOf(true, false)) {
-                assertEquals(
-                    PairingFailureDisposition.RETAIN_ATTEMPT,
-                    pairingFailureDisposition(error, cameFromScanner),
-                )
-            }
+        for (cameFromScanner in listOf(true, false)) {
+            assertEquals(
+                PairingFailureDisposition.RETAIN_ATTEMPT,
+                pairingFailureDisposition(unreachable, cameFromScanner),
+            )
         }
+    }
+
+    @Test
+    fun `an address that is not a server clears the code as iOS does`() {
+        val notAServer = ServerAddressError.notAServer("https://mini.example", java.io.IOException("404"))
+        assertEquals(
+            PairingFailureDisposition.DROP_SCANNED_ATTEMPT,
+            pairingFailureDisposition(notAServer, cameFromScanner = true),
+        )
+        assertEquals(
+            PairingFailureDisposition.RESET_TYPED_ATTEMPT,
+            pairingFailureDisposition(notAServer, cameFromScanner = false),
+        )
     }
 
     @Test

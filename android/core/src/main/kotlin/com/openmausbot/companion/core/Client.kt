@@ -80,20 +80,25 @@ class ServerPairingRetryError(cause: IOException) : IOException(
  * never left the phone: the same code and attempt id stay usable once the address, the network
  * or the phone is fixed. The message names the address, since that is what the person can check.
  */
-class ServerAddressError private constructor(message: String, cause: IOException) :
-    IOException(message, cause) {
+class ServerAddressError private constructor(
+    message: String,
+    cause: IOException,
+    /** The address answered and is not a server: the code typed for it is no use, as on iOS. */
+    val notAServer: Boolean,
+) : IOException(message, cause) {
     companion object {
         /** Nothing at the descriptor: something answers at [address], and it is not a server. */
         fun notAServer(address: String, cause: IOException) = ServerAddressError(
             "$address isn't an OpenMausBot server. Check the address and try again.",
             cause,
+            notAServer = true,
         )
 
         /** Any other failure, with the transport's own reason and what Android adds to it. */
         fun unreachable(address: String, host: String, cause: IOException): ServerAddressError {
             val reason = cause.message?.trim()?.removeSuffix(".")?.takeIf { it.isNotEmpty() } ?: "no answer"
             val advice = ConnectionAdvice.pairingAdvice(cause, host)?.let { " $it" }.orEmpty()
-            return ServerAddressError("Couldn't reach $address: $reason.$advice", cause)
+            return ServerAddressError("Couldn't reach $address: $reason.$advice", cause, notAServer = false)
         }
     }
 }
