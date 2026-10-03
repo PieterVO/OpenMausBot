@@ -1,29 +1,29 @@
-// New HTTP routes go in server/routes (server/routes/README.md), yet
-// server/index.ts kept gaining inline `if (path === ...)` blocks. This counts
-// the three ways index.ts matches a request path and holds each count at or
-// below the number written here. The numbers only go down: when a PR moves a
-// route out of index.ts, it lowers them in the same PR. A new route never
-// raises them; it goes in server/routes instead.
+// server/index.ts may not gain request-path guards; new routes go in server/routes (see its README).
+// Counted per occurrence. Each count must equal its number here, so a PR that moves a route out lowers it.
 import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 
 const INDEX = readFileSync(new URL("../../server/index.ts", import.meta.url), "utf8");
 
-// Counted per occurrence, so a second path added to an existing `||` guard
-// counts too. startsWith is counted so a prefix guard cannot stand in for a route.
-const MOST: Record<string, number> = {
+const EXACT: Record<string, number> = {
   'path === "/': 164,
   "path.match(": 91,
   "path.startsWith(": 11,
+  ".exec(path)": 18,
+  ".test(path)": 1,
+  ".includes(path)": 3,
 };
 
 const count = (needle: string) => INDEX.split(needle).length - 1;
 
 describe("server/index.ts gains no route handlers", () => {
-  it("matches request paths no more often than before", () => {
-    const grown = Object.entries(MOST)
-      .filter(([needle, most]) => count(needle) > most)
-      .map(([needle, most]) => `${needle} appears ${count(needle)} times, at most ${most}`);
-    expect(grown, "Put new routes in server/routes (server/routes/README.md), not server/index.ts.").toEqual([]);
+  it("matches request paths exactly as often as written here", () => {
+    const changed = Object.entries(EXACT).flatMap(([needle, written]) => {
+      const n = count(needle);
+      if (n > written) return [`${needle} appears ${n} times, more than ${written}: put the new route in server/routes`];
+      if (n < written) return [`${needle} appears ${n} times: lower its number here to ${n}`];
+      return [];
+    });
+    expect(changed, "See server/routes/README.md").toEqual([]);
   });
 });
