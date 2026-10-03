@@ -125,10 +125,12 @@ function mount(initial: Partial<Props> = {}) {
     result = useTranscriptViewport(props);
   };
   // what React's commit does before layout effects: attach refs, lay out rows
+  // (a browser clamps scrollTop when the content gets shorter)
   const commit = () => {
     result.scrollRef.current = scroller as unknown as HTMLDivElement;
     result.transcriptRef.current = {} as HTMLDivElement;
     scroller.rows = result.windowedMessages.length;
+    scroller.scrollTop = Math.min(scroller.scrollTop, scroller.bottom);
   };
   const flushFrames = () => {
     const queued = frames;
@@ -251,6 +253,57 @@ describe("transcript viewport", () => {
     expect(view.current.windowedMessages[0]?.id).toBe("m1180");
   });
 
+  it("keeps the window bounded while the reader follows new rows", () => {
+    const view = mount({ messages: rows(300) });
+    for (let total = 301; total <= 900; total++) {
+      view.rerender({ messages: rows(total) });
+      expect(view.current.windowedMessages.length).toBeLessThanOrEqual(120);
+      // rows leaving at the top leave a following reader at the bottom
+      expect(scroller.scrollTop).toBe(scroller.bottom);
+    }
+    expect(view.current.windowedMessages[0]?.id).toBe("m780");
+    expect(view.current.windowedMessages.at(-1)?.id).toBe("m899");
+    expect(view.current.hiddenCount).toBe(780);
+  });
+
+  it("holds the reader's rows and grows the window once they have scrolled away", () => {
+    const view = mount({ messages: rows(300) });
+    view.act(() => view.current.scrollHandlers.onWheel({ deltaY: -40 } as never));
+    scroller.scrollTop = 2_000;
+    for (let total = 301; total <= 900; total++) view.rerender({ messages: rows(total) });
+    expect(view.current.hiddenCount).toBe(180);
+    expect(view.current.windowedMessages).toHaveLength(720);
+    expect(scroller.scrollTop).toBe(2_000);
+  });
+
+  it("slides back to the latest window when the reader returns to the bottom", () => {
+    const view = mount({ messages: rows(300) });
+    view.act(() => view.current.showEarlier());
+    view.rerender({ messages: rows(301) });
+    expect(view.current.hiddenCount).toBe(60);
+
+    view.act(() => {
+      scroller.scrollTop = scroller.bottom;
+      view.current.scrollHandlers.onScroll();
+    });
+    expect(view.current.following).toBe(true);
+    expect(view.current.hiddenCount).toBe(181);
+    expect(scroller.scrollTop).toBe(scroller.bottom);
+  });
+
+  it("shows the tail of a thread that shrinks under the window, following or not", () => {
+    const view = mount({ messages: rows(300) });
+    view.rerender({ messages: rows(400) });
+    view.rerender({ messages: rows(150) });
+    expect(view.current.hiddenCount).toBe(30);
+    expect(view.current.windowedMessages).toHaveLength(120);
+
+    view.act(() => press("PageUp"));
+    view.rerender({ messages: rows(100) });
+    expect(view.current.hiddenCount).toBe(0);
+    expect(view.current.windowedMessages).toHaveLength(100);
+  });
+
   it("shows earlier rows without moving the row under the reader", () => {
     const view = mount({ messages: rows(300) });
     scroller.scrollTop = 1_000;
@@ -305,6 +358,19 @@ describe("transcript viewport", () => {
 
     view.act(() => view.current.showLater());
     expect(view.current.laterCount).toBe(60);
+  });
+
+  it("keeps a search result's window when the reader scrolls to its end", () => {
+    store.state.focusMessage = { threadId: "thread", messageId: "m10", nonce: 1, consumed: false };
+    const view = mount({ messages: rows(300) });
+    view.act(() => {
+      scroller.scrollTop = scroller.bottom;
+      view.current.scrollHandlers.onScroll();
+    });
+    expect(view.current.following).toBe(true);
+    view.rerender({ messages: rows(301) });
+    expect(view.current.windowedMessages[0]?.id).toBe("m0");
+    expect(view.current.laterCount).toBe(181);
   });
 
   it("jumps back to the latest rows and resumes following", () => {

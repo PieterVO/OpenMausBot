@@ -48,10 +48,12 @@ export function focusWindowRange(
 
 /** Resolve a stored boundary against the current list. The boundary is
  * anchored — appends grow the window instead of sliding it, so rows the
- * reader is looking at never drop out from under them. Anchoring means a
- * thread that shrinks (branch switch, edit rewinding the tail) can leave the
- * boundary at or past the new end; that stale boundary falls back to a fresh
- * tail window rather than blanking the transcript. */
+ * reader is looking at never drop out from under them. (The viewport hook
+ * moves the boundary up to the tail while the reader follows the bottom, so
+ * only a reader who has scrolled away sees the window grow.) Anchoring means
+ * a thread that shrinks (branch switch, edit rewinding the tail) can leave
+ * the boundary at or past the new end; that stale boundary falls back to a
+ * fresh tail window rather than blanking the transcript. */
 export function resolveTranscriptWindow<T>(
   messages: readonly T[],
   startIndex: number,
