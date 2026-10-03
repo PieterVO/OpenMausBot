@@ -15,7 +15,7 @@
 // that did not happen. A failed live hand-off may stay buffered for a later
 // drain, but its receipt stays failed.
 
-import { peerName } from "./peer-roster.ts";
+import { oneLine, peerName } from "./peer-roster.ts";
 
 export type PeerDeliveryOutcome = "queued" | "injected" | "failed";
 
@@ -39,19 +39,8 @@ export interface PeerDeliveryReceipt {
 // Detail lines are built from harness error text that can carry
 // peer- or provider-authored content, so they get the same flatten-and-clip
 // discipline as a roster entry (peer-roster.ts) rather than trust the
-// sender of the failure. Written as a scan for the same reason the linter
-// refuses a control-character literal.
+// sender of the failure.
 const DETAIL_MAX = 200;
-const oneLine = (value: string): string => {
-  let flattened = "";
-  for (let i = 0; i < value.length; i += 1) {
-    const code = value.charCodeAt(i);
-    const breaksOut =
-      code < 0x20 || (code >= 0x7f && code <= 0x9f) || code === 0x2028 || code === 0x2029;
-    flattened += breaksOut ? " " : value[i];
-  }
-  return flattened.replace(/\s+/g, " ").trim();
-};
 
 const clip = (value: string): string => {
   const flat = oneLine(value);
