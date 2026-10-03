@@ -121,6 +121,8 @@ final class Session: ObservableObject {
     private var streamGeneration = 0
     private var runtimeGeneration = 0
     private var reconnectDelay: UInt64 = 0
+    /// Resumes that closed right after hello; enough of them start over (MOCA-179).
+    private var streamResume = StreamResume()
     /// How many computer panels are open. A count rather than a flag: the
     /// panel can be pushed twice in a navigation stack, and the last one to
     /// close is the one that should turn screens back off.
@@ -728,6 +730,7 @@ final class Session: ObservableObject {
 
     private func clearActiveConnection() {
         resetCredentialEntry()
+        streamResume = StreamResume()
         streamTask?.cancel()
         streamTask = nil
         endpointRefreshTask?.cancel()
@@ -958,10 +961,13 @@ final class Session: ObservableObject {
                     if Task.isCancelled { return }
                 }
                 var receivedHello = false
-                let events = try client.events(since: state.cursor, screens: screenWatchers > 0)
+                var framesAfterHello = 0
+                let events = try client.events(
+                    since: streamResume.cursor(resuming: state.cursor),
+                    screens: screenWatchers > 0
+                )
                 for try await batch in eventBatches(events) {
                     if Task.isCancelled { return }
-                    reconnectDelay = 0
 
                     if let first = batch.first, case let .hello(cursor, resumed) = first.frame {
                         receivedHello = true
@@ -983,12 +989,17 @@ final class Session: ObservableObject {
                         refreshConnectionMetadata(using: client)
                         continue
                     }
+                    // A frame after hello is the stream working. Only that
+                    // resets the backoff, so hello-then-close slows down.
+                    reconnectDelay = 0
+                    framesAfterHello += batch.count
                     applyStreamBatch(batch)
                 }
                 // A live stream that closes reopens on its route. One that
                 // never said hello never connected: report it as a route
                 // failure, so another allowed route gets a turn.
                 if !receivedHello { throw StreamClosedBeforeHello() }
+                streamResume.ended(framesAfterHello: framesAfterHello)
                 // the stream ended without an error — the harness went away
                 log.notice("stream ended without an error")
                 status = .offline("Lost the connection.")
