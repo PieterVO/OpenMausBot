@@ -15,12 +15,6 @@ export const CLOUD_PERSONAL_PRICE = "$29";
 export const CLOUD_PRO_PRICE = "$49";
 export const CLOUD_MAX_PRICE = "$99";
 
-/** Only someone signed out, or verified as signed in with no plan, no Cloud
- * and no payment being linked, is ever offered a plan (src/lib/cloud-plan.ts). */
-export function proOfferAvailable(account: CloudAccountState | null): boolean {
-  return buyOfferAllowed(cloudPlanView(account));
-}
-
 /** The plan as the native snapshot says; null without a bridge (a browser,
  * a remote page, a Cloud guest): the notices are for the desktop app only. */
 export function useCloudPlan(): CloudPlanView | null {

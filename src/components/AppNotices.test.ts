@@ -17,7 +17,8 @@ vi.mock("@/lib/analytics", () => ({ emailGateDone: () => false }));
 vi.mock("@/lib/updater", () => ({ useUpdaterState: () => f.updater }));
 import { Children, isValidElement, type ReactElement, type ReactNode } from "react";
 import { AppNotices } from "./AppNotices";
-import { ProSettingsCard, proOfferAvailable } from "./ProIntroduction";
+import { ProSettingsCard } from "./ProIntroduction";
+import { buyOfferAllowed, cloudPlanView } from "@/lib/cloud-plan";
 import { PRO_NOTICE, STAR_NOTICE } from "@/lib/notices";
 import { api } from "@/state/store";
 
@@ -134,9 +135,10 @@ it("never offers a plan to anyone who pays, may pay, or whose state is unknown",
     { status: "unavailable", lastPlan: { tier: "max", active: true } }, { status: "unavailable" },
     { status: "reauth-required", message: "expired", lastPlan: { active: true } }, { status: "reauth-required" },
   ];
-  for (const state of nobodyToSell) expect(proOfferAvailable(state), JSON.stringify(state)).toBe(false);
-  expect(proOfferAvailable(signedOut)).toBe(true);
-  expect(proOfferAvailable(plan())).toBe(true);
+  const offered = (state: CloudAccountState | null) => buyOfferAllowed(cloudPlanView(state));
+  for (const state of nobodyToSell) expect(offered(state), JSON.stringify(state)).toBe(false);
+  expect(offered(signedOut)).toBe(true);
+  expect(offered(plan())).toBe(true);
   for (const state of nobodyToSell.slice(1) as CloudAccountState[]) { push(state); expect(render(), JSON.stringify(state)).not.toContain(PRO_TITLE); }
   // A payer who has used the app before gets the star instead, never the Pro card.
   returning();
