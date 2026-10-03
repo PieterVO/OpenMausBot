@@ -74,6 +74,10 @@ final class Session: ObservableObject {
     @Published private(set) var steeringInstanceIds: Set<String> = []
     /// A short-lived desktop handoff waiting for PairingView to present it.
     @Published private(set) var pairingInvite: PairingInvite?
+    /// Why the last pairing link could not be used. PairingView shows it
+    /// inline, beside "Scan QR code", and takes it — never a modal over
+    /// whatever screen the phone happened to be on.
+    @Published private(set) var pairingLinkError: String?
     /// Pairing can be opened while another computer remains connected. The
     /// working session is only replaced after the new credential commits.
     @Published private(set) var pairingRequested = false
@@ -121,6 +125,8 @@ final class Session: ObservableObject {
     private var streamGeneration = 0
     private var runtimeGeneration = 0
     private var reconnectDelay: UInt64 = 0
+    /// Resumes that closed right after hello; enough of them start over (MOCA-179).
+    private var streamResume = StreamResume()
     /// How many computer panels are open. A count rather than a flag: the
     /// panel can be pushed twice in a navigation stack, and the last one to
     /// close is the one that should turn screens back off.
@@ -290,6 +296,14 @@ final class Session: ObservableObject {
                     state.messages["preview-gmail"] = messages
                 }
                 focusedMessageId = "progress2"
+            }
+            // A turn still running: no reply marked final yet, so its
+            // narration is live (Hidden's status line, 2026-10-03).
+            if arguments.contains("-chat-live-narration-preview"),
+               var messages = state.messages["preview-gmail"],
+               let index = messages.lastIndex(where: { $0.turnTerminal == true }) {
+                messages[index].turnTerminal = nil
+                state.messages["preview-gmail"] = messages
             }
             if arguments.contains("-chat-compaction-preview"),
                var receipt = state.messages["preview-gmail"]?.last {
@@ -610,7 +624,10 @@ final class Session: ObservableObject {
 
     func receiveURL(_ url: URL) {
         guard let link = CompanionDeepLink.parse(url) else {
-            actionError = "That pairing invitation is not valid. Start pairing again on your computer."
+            // A link this app does not know — the desktop's own
+            // openmausbot://thread/… or openmausbot://cloud among them. Not
+            // the person's mistake, and not a pairing, so nothing to say.
+            log.notice("ignored link \(url.scheme ?? "", privacy: .public)://\(url.host ?? "", privacy: .public)")
             return
         }
         switch link {
@@ -619,10 +636,18 @@ final class Session: ObservableObject {
                 current: pairingInvite,
                 after: .received(invite)
             )
+            pairingLinkError = nil
+            pairingRequested = true
+        case .invalidPairing:
+            pairingLinkError = "That pairing invitation is not valid. Start pairing again on your computer."
             pairingRequested = true
         case let .chat(threadId):
             openChat(threadId: threadId)
         }
+    }
+
+    func consumePairingLinkError() {
+        pairingLinkError = nil
     }
 
     /// A deep link that names a chat. An id this phone does not know — a
@@ -643,6 +668,7 @@ final class Session: ObservableObject {
 
     func endPairing() {
         pairingRequested = false
+        pairingLinkError = nil
         consumePairingInvite()
     }
 
@@ -726,8 +752,23 @@ final class Session: ObservableObject {
         forgetConnection(id: id)
     }
 
+    /// "Pair again" on the revoked screen: sign the refused computer out and
+    /// open pairing. A link opened while that screen was up waited behind it
+    /// (the router puts recovery first); signing out on its own would drop
+    /// it and leave an empty form, so it is carried across.
+    func pairAgain() {
+        let held = pairingInvite
+        signOut()
+        pairingInvite = CompanionPairingInvitePolicy.nextInvite(
+            current: pairingInvite,
+            after: .pairAgain(held: held)
+        )
+        beginPairing()
+    }
+
     private func clearActiveConnection() {
         resetCredentialEntry()
+        streamResume = StreamResume()
         streamTask?.cancel()
         streamTask = nil
         endpointRefreshTask?.cancel()
@@ -951,12 +992,23 @@ final class Session: ObservableObject {
                 // breaking out here instead would fall through to the "the
                 // harness went away" path and flash a lost-connection banner
                 // on what is actually a deliberate reconnect.
-                let events = try client.events(since: state.cursor, screens: screenWatchers > 0)
+                // With somewhere else to go, find out in seconds whether this
+                // route answers at all rather than in the stream's ninety.
+                if rotation.count > 1 {
+                    try await client.probeRoute()
+                    if Task.isCancelled { return }
+                }
+                var receivedHello = false
+                var framesAfterHello = 0
+                let events = try client.events(
+                    since: streamResume.cursor(resuming: state.cursor),
+                    screens: screenWatchers > 0
+                )
                 for try await batch in eventBatches(events) {
                     if Task.isCancelled { return }
-                    reconnectDelay = 0
 
                     if let first = batch.first, case let .hello(cursor, resumed) = first.frame {
+                        receivedHello = true
                         log.info("stream live, resumed=\(resumed, privacy: .public)")
                         // false means the server could not replay the gap —
                         // the one case that costs a full hydrate. Commit the
@@ -975,8 +1027,17 @@ final class Session: ObservableObject {
                         refreshConnectionMetadata(using: client)
                         continue
                     }
+                    // A frame after hello is the stream working. Only that
+                    // resets the backoff, so hello-then-close slows down.
+                    reconnectDelay = 0
+                    framesAfterHello += batch.count
                     applyStreamBatch(batch)
                 }
+                // A live stream that closes reopens on its route. One that
+                // never said hello never connected: report it as a route
+                // failure, so another allowed route gets a turn.
+                if !receivedHello { throw StreamClosedBeforeHello() }
+                streamResume.ended(framesAfterHello: framesAfterHello)
                 // the stream ended without an error — the harness went away
                 log.notice("stream ended without an error")
                 status = .offline("Lost the connection.")
@@ -1066,7 +1127,7 @@ final class Session: ObservableObject {
         }
         if let urlError = error as? URLError {
             return ConnectionAdvice.message(
-                for: urlError.code,
+                for: urlError,
                 host: failed?.displayAddress ?? connection.host,
                 port: failed?.port ?? connection.port,
                 tryingNext: next
@@ -1080,6 +1141,15 @@ final class Session: ObservableObject {
                 host: failed?.displayAddress ?? connection.host,
                 tryingNext: next
             )
+        }
+        // Only the stream comes through here, so a refusal is the route's,
+        // not "that can only be done on the computer".
+        if let message = ConnectionAdvice.message(
+            forStreamFailure: error,
+            host: failed?.displayAddress ?? connection.host,
+            tryingNext: next
+        ) {
+            return message
         }
         return error.localizedDescription
     }

@@ -286,7 +286,7 @@ fun CompanionRoot(
 
                         OnboardingRoute.REVOKED -> UnpairedScreen(
                             onPairAgain = {
-                                session.signOut()
+                                session.pairAgain()
                                 startPairing()
                             },
                             onChooseAnother = connections.firstOrNull { it.id != connection?.id }
@@ -382,6 +382,11 @@ private fun PairedScreen(
                     onBack = navigator::pop,
                     // A receipt's "Open task" pushes the chat above this screen, the way
                     // iOS appends it to the same navigation path.
+                    onOpenChat = navigator::open,
+                )
+                Destination.Calendar -> RoutineCalendarScreen(
+                    onBack = navigator::pop,
+                    // A run opens the chat its results went to, above the calendar.
                     onOpenChat = navigator::open,
                 )
                 Destination.ConnectedApps -> ConnectedAppsScreen(onBack = navigator::pop)

@@ -136,6 +136,14 @@
     <string name="mobile_new_group_f9850c0b">新增群組</string>
     <string name="mobile_new_quick_reply_c5c6238d">新增快速回復</string>
     <string name="mobile_new_routine_32809dc6">新增例行工作</string>
+    <string name="mobile_calendar_open">例行工作行事曆</string>
+    <string name="mobile_calendar_empty_title">沒有安排</string>
+    <string name="mobile_calendar_empty_body">當天執行的例行工作會顯示在這裡。</string>
+    <string name="mobile_calendar_today">今天</string>
+    <string name="mobile_calendar_previous_week">上一週</string>
+    <string name="mobile_calendar_next_week">下一週</string>
+    <string name="mobile_calendar_scheduled">已排程</string>
+    <string name="mobile_calendar_day_runs">%1$d 次執行</string>
     <string name="mobile_new_thread_02057e28">新增對話</string>
     <string name="mobile_new_thread_with_bot_name_80fb4510">與 %1$s 建立新對話</string>
     <string name="mobile_newer_schedule_c56a41aa">較新的排程</string>
@@ -199,7 +207,7 @@
     <string name="mobile_run_b1b39260">執行</string>
     <string name="mobile_run_now_2af00e23">立即執行</string>
     <string name="mobile_runs_every_dd679464">執行頻率</string>
-    <string name="mobile_discovery_permission_hint">搜尋此網路需要 %1$s 權限，目前尚未啟用。你仍可使用 QR Code 和下方位址，不必開啟這些權限。</string>
+    <string name="mobile_discovery_permission_hint">搜尋此網路需要 %1$s 權限，目前尚未啟用。你仍可使用 QR Code 和下方位址，但透過此網路配對時可能會要求區域網路存取權限。</string>
     <string name="mobile_send_to_bd1c2c33">傳送至</string>
     <string name="mobile_sharing_f789760c">正在分享</string>
     <string name="mobile_slash_commands_e7bb82f3">斜線指令</string>
@@ -765,6 +773,7 @@
     <string name="mobile_until_6_pm">直到下午 6 點</string>
     <string name="mobile_until_9_am_tomorrow">直到明天上午 9 點</string>
     <string name="mobile_pairing_code_placeholder">6 位數或 ABCD-EFGH-JKLM 代碼</string>
+    <string name="mobile_pairing_code_server_symbols_hint">伺服器代碼由 12 個字母和數字組成，不含 0、O、1 或 I。</string>
     <string name="mobile_threads_list">對話列表</string>
     <string name="mobile_list_density">列表密度</string>
     <string name="mobile_change_list_density">變更列表密度</string>
