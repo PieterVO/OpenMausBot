@@ -184,7 +184,7 @@ const ROSTER_ABOUT_MAX = 200;
  * ever occupy the line the roster gave it. Written as a scan rather than a
  * regex because a control-character class is the kind of literal the linter
  * (rightly) refuses. */
-export const oneLine = (value: string): string => {
+const oneLine = (value: string): string => {
   let flattened = "";
   for (let i = 0; i < value.length; i += 1) {
     const code = value.charCodeAt(i);
@@ -195,7 +195,7 @@ export const oneLine = (value: string): string => {
   return flattened.replace(/\s+/g, " ").trim();
 };
 
-const clip = (value: string, max: number): string => {
+export const clip = (value: string, max: number): string => {
   const flat = oneLine(value);
   return flat.length > max ? `${flat.slice(0, max - 1)}…` : flat;
 };

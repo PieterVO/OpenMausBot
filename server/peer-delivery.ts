@@ -15,7 +15,7 @@
 // that did not happen. A failed live hand-off may stay buffered for a later
 // drain, but its receipt stays failed.
 
-import { oneLine, peerName } from "./peer-roster.ts";
+import { clip, peerName } from "./peer-roster.ts";
 
 export type PeerDeliveryOutcome = "queued" | "injected" | "failed";
 
@@ -37,15 +37,9 @@ export interface PeerDeliveryReceipt {
 }
 
 // Detail lines are built from harness error text that can carry
-// peer- or provider-authored content, so they get the same flatten-and-clip
-// discipline as a roster entry (peer-roster.ts) rather than trust the
-// sender of the failure.
+// peer- or provider-authored content, so they are flattened and clipped like
+// a roster entry (peer-roster.ts) rather than trust the sender of the failure.
 const DETAIL_MAX = 200;
-
-const clip = (value: string): string => {
-  const flat = oneLine(value);
-  return flat.length > DETAIL_MAX ? `${flat.slice(0, DETAIL_MAX - 1)}…` : flat;
-};
 
 /** Build a receipt with the detail flattened onto one clipped line. */
 export function peerDeliveryReceipt(receipt: PeerDeliveryReceipt): PeerDeliveryReceipt {
@@ -53,7 +47,7 @@ export function peerDeliveryReceipt(receipt: PeerDeliveryReceipt): PeerDeliveryR
     botId: receipt.botId,
     ...(receipt.botName ? { botName: receipt.botName } : {}),
     outcome: receipt.outcome,
-    detail: clip(receipt.detail) || "no detail recorded",
+    detail: clip(receipt.detail, DETAIL_MAX) || "no detail recorded",
     ...(receipt.taskId ? { taskId: receipt.taskId } : {}),
     ...(receipt.requestId ? { requestId: receipt.requestId } : {}),
     ...(receipt.threadId ? { threadId: receipt.threadId } : {}),
