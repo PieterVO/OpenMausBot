@@ -13,7 +13,7 @@ import { removeTempDir, waitForExit } from "./testing/cleanup.ts";
 
 const ROOT = fileURLToPath(new URL("..", import.meta.url));
 let child: ChildProcess;
-let startServer: () => Promise<void>;
+let startServer: (computerWaitMaxMs?: number) => Promise<void>;
 let fixtureHome = "";
 let base = "";
 let stateFile = "";
@@ -105,7 +105,7 @@ beforeAll(async () => {
   }, computer: { driver: "boxAgent", config: { pollMs: 10 } } } }));
   const port = await freePortBlock([0, 1]);
   base = `http://127.0.0.1:${port}`;
-  startServer = async () => {
+  startServer = async (computerWaitMaxMs) => {
     child = spawn(process.execPath, ["--import", pathToFileURL(join(ROOT, "server/testing/group-local-vm-hooks.mjs")).href, join(ROOT, "server/index.ts")], {
       cwd: ROOT, env: {
         PATH: dirname(process.execPath), ...(process.env.SystemRoot ? { SystemRoot: process.env.SystemRoot } : {}),
@@ -114,6 +114,7 @@ beforeAll(async () => {
         TEMP: fixtureHome, TMP: fixtureHome, TMPDIR: fixtureHome,
         OMB_PORT: String(port), OMB_WEBHOOK_PORT: String(port + 1), OMB_STATIC_DIR: ui, OMB_TEST_VM_STATE: stateFile,
         OMB_BOX_API: `http://127.0.0.1:${boatPort}`,
+        ...(computerWaitMaxMs ? { OMB_COMPUTER_WAIT_MAX_MS: String(computerWaitMaxMs) } : {}),
         OMB_USER_DATA: join(fixtureHome, "user-data"),
       }, stdio: ["ignore", "pipe", "pipe"],
     });
@@ -445,8 +446,10 @@ describe("Group Local VM ownership on the real isolated server", () => {
     }
   });
 
-  it("holds a cloud turn for a marked output question and resumes after the person's reply", async () => {
-    const { bot } = await api("POST", "/api/bots", { name: "Cloud question fixture" });
+  it("holds a Computer engine turn for a marked output question and resumes after the person's reply", async () => {
+    // The Computer engine runs its whole turn on the Boat; every other engine
+    // keeps its own model there, so this protocol is the Computer engine's.
+    const { bot } = await api("POST", "/api/bots", { name: "Cloud question fixture", modelSelection: { instanceId: "computer", model: "claude-fable-5" } });
     try {
       await api("PUT", "/api/config", { box: { token: "box_fixture" } });
       await api("PATCH", `/api/bots/${bot.id}`, { computer: "cloud" });
@@ -497,8 +500,10 @@ describe("Group Local VM ownership on the real isolated server", () => {
       holdBoatPrompt = true;
       allowBoatCreation = true;
       await api("PUT", "/api/config", { box: { token: "box_fixture" } });
+      // The Computer engine holds the shared Boat for as long as its Boat
+      // prompt runs, which is the gated provider this check needs.
       for (const name of ["Computer holder", "Computer waiter"]) {
-        const { bot } = await api("POST", "/api/bots", { name, section });
+        const { bot } = await api("POST", "/api/bots", { name, section, modelSelection: { instanceId: "computer", model: "claude-fable-5" } });
         bots.push(bot);
       }
       const requestId = randomUUID();
@@ -566,16 +571,23 @@ describe("Group Local VM ownership on the real isolated server", () => {
       expect((await fetch(base + "/api/internal/computer/select", { headers: { authorization: `Bearer ${token}` } })).status).toBe(200);
       expect(boatCalls.every(call => call.method === "GET")).toBe(true);
       if (state === "removed") boatRow = null;
+      // The continuation keeps the bot's own engine and model; the selected
+      // Boat arrives as its computer tools. Boat's runner is never asked.
+      const harnessComputer = (sent: any) => computer(sent)?.args?.at(-1) === "computer" && /harness-mcp-proxy/.test(computer(sent).args[0]);
+      rmSync(dumpFile, { force: true });
       writeFileSync(finishFile, "finish");
-      await until(() => api("GET", "/api/bots?messages=30"), result => {
-        const saved = result.bots.find((b: any) => b.id === bot.id);
-        return !saved.busy && boatPrompts.length === 1;
-      });
+      const continued: any = await dump();
+      expect(harnessComputer(continued)).toBe(true);
+      expect(continued.argv[continued.argv.indexOf("--model") + 1]).toBe(before.argv[before.argv.indexOf("--model") + 1]);
+      await idle(bot.id);
+      expect(boatPrompts).toHaveLength(0);
       expect(boatCalls.filter(call => call.method === "POST" && call.path === "/boxes")).toHaveLength(state === "wake" ? 0 : 1);
       expect(boatCalls.some(call => call.path.endsWith("/resume"))).toBe(state === "wake");
-      expect(boatPrompts[0]).toMatchObject({ model: "claude-fable-5" });
+      rmSync(dumpFile, { force: true });
       await api("POST", `/api/bots/${bot.id}/messages`, { text: "Inspect the current page on the same cloud VM" });
-      await until(async () => boatPrompts.length === 2 && !(await api("GET", "/api/bots?messages=0")).bots.find((b: any) => b.id === bot.id).busy, Boolean);
+      expect(harnessComputer(await dump())).toBe(true);
+      await idle(bot.id);
+      expect(boatPrompts).toHaveLength(0);
       expect(boatCalls.filter(call => call.method === "POST" && call.path === "/boxes")).toHaveLength(state === "wake" ? 0 : 1);
     } finally {
       writeFileSync(finishFile, "finish");
@@ -752,20 +764,25 @@ describe("Group Local VM ownership on the real isolated server", () => {
       await api("POST", `/api/bots/${bot.id}/messages`, { text: "Hold the VM" });
       const first = computer(await dump());
       rmSync(stateFile + ".latecompleted", { force: true });
-      vmState({ delayCompletion: 8_000, stall: true });
+      rmSync(stateFile + ".completionheld", { force: true });
+      rmSync(stateFile + ".releasecompletion", { force: true });
+      vmState({ holdCompletion: true, stall: true });
       await until(() => api("GET", "/api/bots?messages=30"), state => JSON.stringify(state).includes("the turn was stopped"));
       await idle(bot.id);
+      await until(() => existsSync(stateFile + ".completionheld"), Boolean);
       expect((await gate(first)).status).toBe(401);
       vmState(); rmSync(dumpFile, { force: true });
       const threadId = newTask ? (await api("POST", `/api/bots/${bot.id}/tasks`, {})).task.threadId : bot.threadId;
       await api("POST", `/api/bots/${bot.id}/messages`, { text: "Keep using the VM", threadId });
       const next = computer(await dump());
       expect(existsSync(stateFile + ".latecompleted")).toBe(false);
+      writeFileSync(stateFile + ".releasecompletion", "release");
       await until(() => existsSync(stateFile + ".latecompleted"), Boolean);
       await new Promise(resolve => setTimeout(resolve, 100));
       expect((await gate(next)).status).toBe(200);
       expect((await api("GET", "/api/bots?messages=0")).bots.find((entry: any) => entry.id === bot.id).busy).toBe(true);
     } finally {
+      writeFileSync(stateFile + ".releasecompletion", "release");
       vmState({ containers: [] }); writeFileSync(finishFile, "finish");
       await api("POST", `/api/bots/${bot.id}/interrupt`, {});
       await idle(bot.id);
@@ -828,7 +845,7 @@ describe("Group Local VM ownership on the real isolated server", () => {
     }
   });
 
-  it("runs a channel speaker's own Cloud destination on its Boat, waking it first", async () => {
+  it("runs a channel speaker's own Cloud destination on its own engine with its Boat, waking it first", async () => {
     const { bots, group } = await room();
     try {
       await api("PUT", "/api/config", { box: { token: "box_fixture" } });
@@ -839,14 +856,22 @@ describe("Group Local VM ownership on the real isolated server", () => {
       const suffix = createHash("sha256").update(bots[0].id).digest("hex").slice(0, 6);
       boatRow = { id: "bx_23456789", name: `ogb-${scope}-${prefix}-${suffix}`, state: "archived" };
       boatCalls.length = 0; boatPrompts.length = 0;
+      // The speaker keeps its own engine; its Boat is woken and mounted as
+      // its computer tools, and Boat's runner is never asked.
+      const onBoat = (sent: any) => computer(sent)?.args?.at(-1) === "computer" && /harness-mcp-proxy/.test(computer(sent).args[0]);
+      writeFileSync(finishFile, "finish");
       await send(group.id);
-      await until(async () => boatPrompts.length === 1 && !(await api("GET", "/api/bots?messages=0")).bots.find((b: any) => b.id === bots[0].id).busy, Boolean);
+      expect(onBoat(await dump())).toBe(true);
+      await idle(bots[0].id);
       expect(boatCalls.some(call => call.path.endsWith("/resume"))).toBe(true);
       expect(boatCalls.filter(call => call.method === "POST" && call.path === "/boxes")).toHaveLength(0);
       expect(JSON.stringify(await api("GET", "/api/bots?messages=30"))).not.toContain("not available in channels yet");
       // The Boat is given back: the same speaker can take the room again.
+      rmSync(dumpFile, { force: true });
       await send(group.id);
-      await until(async () => boatPrompts.length === 2 && !(await api("GET", "/api/bots?messages=0")).bots.find((b: any) => b.id === bots[0].id).busy, Boolean);
+      expect(onBoat(await dump())).toBe(true);
+      await idle(bots[0].id);
+      expect(boatPrompts).toHaveLength(0);
     } finally {
       boatRow = null;
       await stop(group.id);
@@ -950,6 +975,52 @@ describe("Group Local VM ownership on the real isolated server", () => {
     expect(body).toEqual({ held: false, helpOpen: false });
     await stop(group.id); await idle(bots[0].id);
   });
+
+  it("parks an eager Auto VM wait and resumes with its computer after the holder stops", async () => {
+    await waitForExit(child, { signal: "SIGTERM" });
+    await startServer(2_000);
+    vmState({ containers: ["shared"] });
+    rmSync(dumpFile, { force: true }); rmSync(finishFile, { force: true });
+    const { bot: holder } = await api("POST", "/api/bots", { name: "Eager Auto VM holder", computer: "vm", browser: false });
+    const { bot: auto } = await api("POST", "/api/bots", { name: "Eager Auto VM waiter", browser: false });
+    try {
+      await api("GET", "/api/local-computer");
+      await api("POST", `/api/bots/${holder.id}/messages`, { text: "Hold the shared VM" });
+      const mountedHolder = computer(await dump());
+      expect((await gate(mountedHolder)).status).toBe(200);
+      rmSync(dumpFile, { force: true });
+      // The container can stop outside the app while its provider turn still
+      // holds the seat. Auto must eagerly wait before waking this known VM.
+      vmState({ containers: ["shared"], stopped: ["shared"] });
+      await api("POST", `/api/bots/${auto.id}/messages`, { text: "Use the stopped shared VM when available" });
+      await until(async () => JSON.stringify((await api("GET", `/api/threads/${auto.threadId}/messages`)).messages)
+        .includes("Parked — it continues automatically when the computer is free"), Boolean);
+      const parked = await until(() => api("GET", "/api/bots?messages=0"), state => {
+        const task = state.bots.find((bot: any) => bot.id === auto.id)?.tasks.find((task: any) => task.threadId === auto.threadId);
+        return task?.activity === "parked.computer" || existsSync(dumpFile);
+      });
+      const task = parked.bots.find((bot: any) => bot.id === auto.id).tasks.find((task: any) => task.threadId === auto.threadId);
+      expect(task).toMatchObject({ busy: false, activity: "parked.computer" });
+      expect(existsSync(dumpFile)).toBe(false);
+      expect(JSON.parse(readFileSync(stateFile, "utf8")).actions ?? []).toEqual([]);
+      await api("POST", `/api/bots/${holder.id}/interrupt`, { threadId: holder.threadId });
+      await idle(holder.id);
+      const resumed = await dump();
+      expect(computer(resumed)).toBeTruthy();
+      expect(resumed).toMatchObject({ prompt: { message: { content: expect.stringContaining("Continue the task that parked waiting for it") } } });
+      expect(JSON.parse(readFileSync(stateFile, "utf8")).actions).toEqual([{ action: "start", target: "shared" }]);
+      expect((await gate(computer(resumed))).status).toBe(200);
+    } finally {
+      for (const bot of [auto, holder]) {
+        await api("POST", `/api/bots/${bot.id}/interrupt`, { threadId: bot.threadId });
+        await idle(bot.id);
+        await api("DELETE", `/api/bots/${bot.id}`);
+      }
+      vmState();
+      await waitForExit(child, { signal: "SIGTERM" });
+      await startServer();
+    }
+  }, 60_000);
 
   it("runs a screen-less Auto turn to completion while another thread holds the Local VM (issue #1361 AC1)", async () => {
     vmState(); rmSync(dumpFile, { force: true }); rmSync(finishFile, { force: true });

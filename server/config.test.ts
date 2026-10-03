@@ -1,10 +1,11 @@
-import { mkdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { chmodSync, mkdirSync, readFileSync, renameSync, rmSync, statSync, utimesSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { JsonValue } from "./schema.ts";
 
-import { customMcpServers,
+import { cacheUntilConfigChanges,
+  customMcpServers,
   DATA_DIR,
   ensureDirs,
   instanceConfigs,
@@ -40,6 +41,8 @@ import { customMcpServers,
   browserEngineAttachCdpUrl,
   withInstanceCli,
   WORKSPACE_CREDENTIAL_ENV,
+  liveSettingsFor,
+  LIVE_IDLE_MINUTES_DEFAULT,
   type AppConfig,
 } from "./config.ts";
 
@@ -525,21 +528,17 @@ describe("configuration boundaries", () => {
     // the pre-rename flag is dropped as a no-op rather than rejected, so a
     // stale client's PATCH cannot fail the request or re-enable anything
     expect(parseConfigPatch({ features: { skillRecorder: true } })).toEqual({ features: {} });
-    // the built-in browser is an independent explicit opt-in
-    expect(builtInBrowserEnabled({})).toBe(false);
-    expect(builtInBrowserEnabled({ features: { skillAuthoring: true } })).toBe(false);
+    // the built-in browser is on unless the person switched it off
+    expect(builtInBrowserEnabled({})).toBe(true);
+    expect(builtInBrowserEnabled({ features: { skillAuthoring: true } })).toBe(true);
     expect(parseConfigPatch({ features: { browser: false } })).toEqual({ features: { browser: false } });
     expect(builtInBrowserEnabled({ features: { browser: false } })).toBe(false);
     expect(builtInBrowserEnabled({ features: { browser: true } })).toBe(true);
-    // An OMB Cloud home skips the welcome that turns it on, so there it is on
-    // until the person turns it off; any other server is unchanged.
+    // same everywhere: an OMB Cloud home and a self-hosted server alike
     const cloudHome = { OMB_CLOUD_ROLE: "home", OMB_CLOUD_MACHINE_ID: "3f9c2a4e-8b1d-4c6e-9a7f-2d5e8c1b0a93" };
-    expect(builtInBrowserEnabled({}, {})).toBe(false);
-    expect(builtInBrowserEnabled({}, { OMB_PUBLIC_URL: "https://selfhosted.example.test" })).toBe(false);
+    expect(builtInBrowserEnabled({}, { OMB_PUBLIC_URL: "https://selfhosted.example.test" })).toBe(true);
     expect(builtInBrowserEnabled({}, cloudHome)).toBe(true);
-    expect(builtInBrowserEnabled({ features: { skillAuthoring: true } }, cloudHome)).toBe(true);
     expect(builtInBrowserEnabled({ features: { browser: false } }, cloudHome)).toBe(false);
-    expect(builtInBrowserEnabled({ features: { browser: true } }, cloudHome)).toBe(true);
     // named browser profiles: the list is the unit, ids are partition-safe
     expect(parseConfigPatch({ browserProfiles: [{ id: "work", name: " Work " }] })).toEqual({
       browserProfiles: [{ id: "work", name: "Work" }],
@@ -1712,6 +1711,58 @@ describe("customMcpServers with url entries", () => {
   });
 });
 
+describe("live settings", () => {
+  it("defaults to a 5 minute idle hang-up and reading typed replies", () => {
+    expect(LIVE_IDLE_MINUTES_DEFAULT).toBe(5);
+    expect(liveSettingsFor({} as AppConfig)).toEqual({ configured: false, voice: "", readTypedReplies: true, idleMinutes: 5 });
+  });
+  it("reports saved values and never the key", () => {
+    const settings = liveSettingsFor({ live: { key: "sk-test", voice: "sol", readTypedReplies: false, idleMinutes: 12 } } as AppConfig);
+    expect(settings).toEqual({ configured: true, voice: "sol", readTypedReplies: false, idleMinutes: 12 });
+    expect(JSON.stringify(settings)).not.toContain("sk-test");
+  });
+  it("accepts idle minutes from 1 to 60 only", () => {
+    expect(() => parseConfigPatch({ live: { idleMinutes: 0 } })).toThrow();
+    expect(() => parseConfigPatch({ live: { idleMinutes: 61 } })).toThrow();
+    expect(() => parseConfigPatch({ live: { idleMinutes: 2.5 } })).toThrow();
+    expect(parseConfigPatch({ live: { idleMinutes: 60, readTypedReplies: false } })).toMatchObject({ live: { idleMinutes: 60, readTypedReplies: false } });
+  });
+  it("does not reload providers for live changes", () => {
+    expect(providerReloadKeys({ live: { idleMinutes: 3 } } as never)).toEqual([]);
+  });
+
+  describe("saving settings from PATCH /api/live/settings", () => {
+    const path = join(DATA_DIR, "config.json");
+    let envKey: string | undefined;
+    beforeEach(() => {
+      envKey = process.env.OMB_OPENAI_LIVE_KEY;
+      delete process.env.OMB_OPENAI_LIVE_KEY;
+      mkdirSync(DATA_DIR, { recursive: true });
+      rmSync(path, { force: true });
+    });
+    afterEach(() => {
+      if (envKey === undefined) delete process.env.OMB_OPENAI_LIVE_KEY;
+      else process.env.OMB_OPENAI_LIVE_KEY = envKey;
+      rmSync(path, { force: true });
+    });
+
+    it("keeps the Live key when only settings change", () => {
+      saveConfig({ live: { key: "sk-keep" } });
+      saveConfig({ live: { idleMinutes: 9 } });
+      expect(loadConfig().live).toMatchObject({ key: "sk-keep", idleMinutes: 9 });
+    });
+
+    it("keeps a key from the desktop credential store, which reaches the harness as env", () => {
+      // the desktop leaves an empty tombstone in the file and hands the key over as env
+      saveConfig({ live: { key: "" } });
+      process.env.OMB_OPENAI_LIVE_KEY = "sk-from-keychain";
+      saveConfig({ live: { readTypedReplies: false, voice: "cedar" } });
+      expect(loadConfig().live).toEqual({ key: "sk-from-keychain", readTypedReplies: false, voice: "cedar" });
+      expect(JSON.parse(readFileSync(path, "utf8")).live).toEqual({ key: "", readTypedReplies: false, voice: "cedar" });
+    });
+  });
+});
+
 describe("loadConfig with an unusable config.json", () => {
   const path = join(DATA_DIR, "config.json");
   let warn: ReturnType<typeof vi.spyOn>;
@@ -1777,4 +1828,116 @@ describe("loadConfig with an unusable config.json", () => {
       warn.mockClear();
     }
   });
+});
+
+describe("a value derived from config.json", () => {
+  const path = join(DATA_DIR, "config.json");
+  const members = (config: AppConfig) => config.signIn?.members ?? [];
+  /** Written a minute ago: a running server's file, not one mid-save. */
+  const writeSettled = (signIn: AppConfig["signIn"], minutesAgo = 1) => {
+    writeFileSync(path, JSON.stringify({ signIn }));
+    const when = new Date(Date.now() - minutesAgo * 60_000);
+    utimesSync(path, when, when);
+  };
+  beforeEach(() => { mkdirSync(DATA_DIR, { recursive: true }); rmSync(path, { force: true }); });
+  afterEach(() => { rmSync(path, { force: true }); });
+
+  it("reads config.json once while the file is unchanged", () => {
+    writeSettled({ members: ["one@example.test"] });
+    const derive = vi.fn(members);
+    const read = cacheUntilConfigChanges(derive);
+    for (let i = 0; i < 5; i++) expect(read()).toEqual(["one@example.test"]);
+    expect(derive).toHaveBeenCalledTimes(1);
+  });
+
+  it("sees an outside edit on the next call, in place or renamed over the file", () => {
+    writeSettled({ members: ["one@example.test", "two@example.test"] });
+    const read = cacheUntilConfigChanges(members);
+    expect(read()).toEqual(["one@example.test", "two@example.test"]);
+    // In place, as a hand edit does: the size and the time change.
+    writeSettled({ members: ["one@example.test"] }, 2);
+    expect(read()).toEqual(["one@example.test"]);
+    // Renamed over the file, as the CLI and the fleet agent write it: same
+    // size and same time, so only the new file identity tells them apart.
+    const before = statSync(path);
+    writeFileSync(`${path}.next`, JSON.stringify({ signIn: { members: ["two@example.test"] } }));
+    utimesSync(`${path}.next`, before.atime, before.mtime);
+    renameSync(`${path}.next`, path);
+    expect(statSync(path).size).toBe(before.size);
+    expect(read()).toEqual(["two@example.test"]);
+  });
+
+  it("sees this process's own save at once", () => {
+    writeSettled({ members: ["one@example.test"] });
+    const read = cacheUntilConfigChanges(members);
+    expect(read()).toEqual(["one@example.test"]);
+    saveConfig({ signIn: { members: [] } });
+    expect(read()).toEqual([]);
+  });
+
+  it("reads a file saved in the last moments every time, so a second save in the same clock tick is not missed", () => {
+    const tick = new Date();
+    writeFileSync(path, JSON.stringify({ signIn: { members: ["one@example.test"] } }));
+    utimesSync(path, tick, tick);
+    const read = cacheUntilConfigChanges(members);
+    expect(read()).toEqual(["one@example.test"]);
+    // Same size, same file, same modification time: nothing in stat changed.
+    writeFileSync(path, JSON.stringify({ signIn: { members: ["two@example.test"] } }));
+    utimesSync(path, tick, tick);
+    expect(read()).toEqual(["two@example.test"]);
+  });
+
+  it("never keeps the old value once the file is gone", () => {
+    writeSettled({ members: ["one@example.test"] });
+    const read = cacheUntilConfigChanges(members);
+    expect(read()).toEqual(["one@example.test"]);
+    rmSync(path);
+    expect(read()).toEqual([]);
+  });
+
+  it("reads a file loadConfig() could not use on every call, never keeping its defaults", () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    try {
+      writeFileSync(path, "{ not json");
+      const when = new Date(Date.now() - 60_000);
+      utimesSync(path, when, when);
+      const derive = vi.fn(members);
+      const read = cacheUntilConfigChanges(derive);
+      expect(read()).toEqual([]);
+      expect(read()).toEqual([]);
+      expect(derive).toHaveBeenCalledTimes(2);
+    } finally {
+      warn.mockRestore();
+    }
+  });
+
+  it.skipIf(process.platform === "win32")("sees a change of permissions or owner on the next call", () => {
+    writeSettled({ members: ["one@example.test"] });
+    const derive = vi.fn(members);
+    const read = cacheUntilConfigChanges(derive);
+    read();
+    // chmod and chown leave the size, the time and the file the same.
+    chmodSync(path, 0o600);
+    read();
+    expect(derive).toHaveBeenCalledTimes(2);
+  });
+
+  it.skipIf(process.platform === "win32" || process.getuid?.() === 0)(
+    "uses the list again once a file the server could not read is readable",
+    () => {
+      const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+      try {
+        writeSettled({ members: ["one@example.test"] });
+        chmodSync(path, 0o000);
+        const read = cacheUntilConfigChanges(members);
+        expect(read()).toEqual([]);
+        expect(read()).toEqual([]);
+        chmodSync(path, 0o600);
+        expect(read()).toEqual(["one@example.test"]);
+      } finally {
+        chmodSync(path, 0o600);
+        warn.mockRestore();
+      }
+    },
+  );
 });

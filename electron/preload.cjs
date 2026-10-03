@@ -35,10 +35,13 @@ ipcRenderer.on("app:open-settings", (_event, section) => {
 // helpers here. Main enforces the same rule on the sensitive channels.
 const localOrigin = process.argv.find((arg) => arg.startsWith("--omb-local-origin="))?.slice("--omb-local-origin=".length) ?? null;
 const isLocalPage = !localOrigin || location.origin === localOrigin;
-// cloudMove and cloudLending: main answers them on a remote page only when
-// that page is the person's own verified Cloud in this window (Move to
-// Cloud's card and the Cloud's setup checklist).
-const REMOTE_SAFE = new Set(["platform", "getCapabilities", "onCapabilitiesChanged", "applySkin", "setUnreadCount", "permStatus", "workspaces", "cloudMove", "cloudLending"]);
+// cloudMove: main answers a remote page about that page's own server only,
+// while it is this window's active server (Copy this computer here's card and
+// its Settings → Backups). cloudLending and cloudPlan: only the person's own
+// verified Cloud (the Cloud's setup checklist, and its Settings' plan line).
+/** A saved server's id, forwarded only from this computer's own page. */
+const savedServer = id => isLocalPage && typeof id === "string" && /^[\w-]{1,64}$/.test(id) ? [id] : [];
+const REMOTE_SAFE = new Set(["platform", "getCapabilities", "onCapabilitiesChanged", "applySkin", "setUnreadCount", "permStatus", "workspaces", "cloudMove", "cloudLending", "cloudPlan"]);
 
 // Sandboxed preload cannot import TS or sibling modules. Keep this list in
 // parity with shared/workspace-backup-client.ts (covered by the preload test).
@@ -103,6 +106,7 @@ const bridge = {
     refreshTailscale: () => ipcRenderer.invoke("companion:refresh-tailscale"),
     pairing: (open, expectedToken) => ipcRenderer.invoke("companion:pairing", open, expectedToken),
     cloudDesktop: (deviceId, allowed) => ipcRenderer.invoke("companion:cloud-desktop", deviceId, allowed),
+    browserControl: (deviceId, allowed) => ipcRenderer.invoke("companion:browser-control", deviceId, allowed),
     revoke: (deviceId) => ipcRenderer.invoke("companion:revoke", deviceId),
   },
   /** Keep this computer awake for scheduled routines. The hold itself lives
@@ -185,7 +189,7 @@ const bridge = {
   permRequestMic: () => ipcRenderer.invoke("perm:request-mic"),
   /** Opens System Settings on the given privacy pane: mic|screen|speech. */
   permOpenSettings: (pane) => ipcRenderer.invoke("perm:open-settings", pane),
-  /** Relaunch the local macOS app after a permission grant. */
+  /** Relaunch the local desktop app through its normal shutdown cleanup. */
   relaunch: () => ipcRenderer.invoke("desktop:relaunch"),
 
   /** Copies an engine install command and opens a blank terminal. Resolves
@@ -295,12 +299,14 @@ const bridge = {
   cloudAccount: process.argv.includes("--omb-company-desktop=1") ? {
     state: () => ipcRenderer.invoke("cloud-account:state"),
     begin: () => ipcRenderer.invoke("cloud-account:begin"),
+    signInAgain: () => ipcRenderer.invoke("cloud-account:signInAgain"),
     reopen: () => ipcRenderer.invoke("cloud-account:reopen"),
     cancel: () => ipcRenderer.invoke("cloud-account:cancel"),
     refresh: () => ipcRenderer.invoke("cloud-account:refresh"),
     signOut: () => ipcRenderer.invoke("cloud-account:signOut"),
     openDashboard: () => ipcRenderer.invoke("cloud-account:openDashboard"),
     connectHome: () => ipcRenderer.invoke("cloud-account:connectHome"),
+    connectHomeForPhone: () => ipcRenderer.invoke("cloud-account:connectHomeForPhone"),
     onState: cb => {
       const handler = (_event, state) => cb(state);
       ipcRenderer.on("cloud-account:state-changed", handler);
@@ -314,16 +320,18 @@ const bridge = {
       stop: () => ipcRenderer.invoke("lending:stop"),
     },
   } : undefined,
-  /** Move to Cloud: this computer's workspace to the person's Cloud home.
-   * No arguments reach main. A remote page may start a move only from the
+  /** Copy this computer here: this computer's workspace to a server the
+   * person added (their Cloud included). Only this computer's own page names
+   * where (a saved server's id, or "cloud"); a server's page names nothing,
+   * main answers it about itself, and it may start a copy only from the
    * person's own click. */
   cloudMove: process.argv.includes("--omb-company-desktop=1") ? {
-    state: () => ipcRenderer.invoke("cloud-move:state"),
-    start: () => isLocalPage || navigator.userActivation?.isActive === true
-      ? ipcRenderer.invoke("cloud-move:start") : Promise.reject(new Error("Choose Move to start moving.")),
+    state: id => ipcRenderer.invoke("cloud-move:state", ...savedServer(id)),
+    start: id => isLocalPage ? ipcRenderer.invoke("cloud-move:start", ...savedServer(id))
+      : navigator.userActivation?.isActive === true ? ipcRenderer.invoke("cloud-move:start") : Promise.reject(new Error("Choose Copy to start copying.")),
     cancel: () => ipcRenderer.invoke("cloud-move:cancel"),
-    restorePrevious: () => ipcRenderer.invoke("cloud-move:restore-previous"),
-    dismiss: () => ipcRenderer.invoke("cloud-move:dismiss"),
+    restorePrevious: id => ipcRenderer.invoke("cloud-move:restore-previous", ...savedServer(id)),
+    dismiss: id => ipcRenderer.invoke("cloud-move:dismiss", ...savedServer(id)),
     onState: cb => {
       const handler = (_event, state) => cb(state);
       ipcRenderer.on("cloud-move:state-changed", handler);
@@ -335,6 +343,16 @@ const bridge = {
    * shows the switch and changes nothing. */
   cloudLending: process.argv.includes("--omb-company-desktop=1") ? {
     open: () => ipcRenderer.invoke("cloud-lending:open"),
+  } : undefined,
+  /** The plan, read only, in Settings on the person's own Cloud: its name and
+   * whether it is active, Manage (the Cloud dashboard in the browser) and
+   * back to this computer. No arguments; a remote page acts only on a click. */
+  cloudPlan: process.argv.includes("--omb-company-desktop=1") ? {
+    state: () => ipcRenderer.invoke("cloud-plan:state"),
+    manage: () => isLocalPage || navigator.userActivation?.isActive === true
+      ? ipcRenderer.invoke("cloud-plan:manage") : Promise.reject(new Error("Choose Manage to open your Cloud dashboard.")),
+    useThisComputer: () => isLocalPage || navigator.userActivation?.isActive === true
+      ? ipcRenderer.invoke("cloud-plan:local") : Promise.reject(new Error("Choose Use this computer to switch.")),
   } : undefined,
   organization: process.argv.includes("--omb-company-desktop=1") ? {
     settingsOpened: () => ipcRenderer.invoke("organization:settings-opened"),

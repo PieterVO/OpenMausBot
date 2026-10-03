@@ -64,11 +64,14 @@ public struct OptionCard: Codable, Hashable, Sendable {
     /// the behavior once the harness settles a live ask, so without this a
     /// settled question card would read "answer" instead of the reply.
     public var answeredText: String? = nil
+    /// Terminal: the proposal went stale while open. The computer clears
+    /// its options and nothing can answer it; a fresh proposal is needed.
+    public var expired: Bool? = nil
 
     /// A card is actionable while it is unanswered and still has a request
     /// behind it. Everything else is transcript.
     public var isPending: Bool {
-        requestId != nil && answered == nil && dismissed != true
+        requestId != nil && answered == nil && dismissed != true && expired != true
     }
 
     /// Permission cards carry a tool; questions do not.
@@ -268,8 +271,12 @@ public struct Message: Codable, Hashable, Identifiable, Sendable {
     /// when it held the message, echoed back on the line that finally landed.
     /// Clients match it against their held-send rows to retire them.
     public var queueId: String?
+    public var steered: Bool?
     /// Rooms: which member said this.
     public var from: Sender?
+    /// How a user-role message arrived: "api" through the server's HTTP API,
+    /// "call" spoken on a Live call and transcribed. Absent for a typed one.
+    public var via: String?
     public var reactions: [Reaction]?
     public var comm: CommChip?
     /// Screen messages in the paged shape: the pixels live behind
@@ -698,6 +705,67 @@ public struct BotOverview: Codable, Hashable, Sendable {
     }
 }
 
+/// One line of a bot's activity log: what ran, in words, and how it ended.
+/// Built on the computer from logs that already exist (server/activity.ts);
+/// the phone only reads it.
+public struct ActivityRow: Codable, Hashable, Sendable {
+    /// ISO 8601, when it started (a tool) or was asked (a request)
+    public var at: String
+    public var threadId: String
+    public var turnId: String?
+    public var requestId: String?
+    /// the raw tool name
+    public var tool: String
+    /// the connected app or surface it touched, when there is one
+    public var app: String?
+    /// the action, in words
+    public var label: String
+    /// the arguments the decision log recorded, already redacted
+    public var summary: String?
+    /// ran | failed | running | allowed | denied | waiting
+    public var outcome: String
+}
+
+public struct ActivityPage: Codable, Hashable, Sendable {
+    public var rows: [ActivityRow]
+}
+
+public struct TeamMemorySource: Codable, Hashable, Sendable {
+    public var botId: String
+    public var botName: String
+    public var threadId: String
+    /// epoch milliseconds
+    public var at: Double
+}
+
+/// One thing every bot in a section shares: a person, a place, a decision,
+/// or a term. `proposed` waits for the person; `accepted` rides the prompt.
+public struct TeamMemoryEntry: Codable, Hashable, Identifiable, Sendable {
+    public var id: String
+    /// person | place | decision | term
+    public var kind: String
+    public var name: String
+    public var detail: String
+    public var aliases: [String]
+    /// accepted | proposed
+    public var status: String
+    public var source: TeamMemorySource
+    /// epoch milliseconds
+    public var updatedAt: Double
+}
+
+public struct TeamMemoryPage: Codable, Hashable, Sendable {
+    public var section: String
+    public var label: String
+    public var entries: [TeamMemoryEntry]
+}
+
+/// What an edit answers with: the edited entry and the whole page.
+public struct TeamMemoryEdit: Codable, Hashable, Sendable {
+    public var entry: TeamMemoryEntry?
+    public var entries: [TeamMemoryEntry]
+}
+
 public struct GroupResponder: Codable, Hashable, Sendable {
     public var kind: String
     public var botId: String?
@@ -716,6 +784,9 @@ public struct Room: Codable, Hashable, Identifiable, Sendable {
     /// Desktop sidebar section. Missing or blank means the built-in Channels area.
     public var section: String?
     public var busyBotId: String?
+    /// True for the whole orchestrated run — routing, members queued behind
+    /// a busy speaker, hand-offs — not just while `busyBotId` names a speaker.
+    public var working: Bool? = nil
     /// Independent user conversations in this channel. Bot-to-bot rooms
     /// omit tasks because their transcript is the canonical private chat.
     public var tasks: [BotTask]?
@@ -1073,9 +1144,11 @@ public struct ModelCatalog: Codable, Hashable, Sendable {
 /// offer a reasoning control.
 public struct InstanceCapabilities: Codable, Hashable, Sendable {
     public var effortLevels: [String]?
+    public var queueing: Bool?
 
-    public init(effortLevels: [String]? = nil) {
+    public init(effortLevels: [String]? = nil, queueing: Bool? = nil) {
         self.effortLevels = effortLevels
+        self.queueing = queueing
     }
 }
 
@@ -1141,6 +1214,9 @@ public struct ConfigStatus: Codable, Sendable {
     public var tts: ConfigFlag?
     public var imageGen: ConfigFlag?
     public var profile: Profile?
+    /// Live-call settings on the paired computer. Absent on a computer older
+    /// than Live calls; never carries the key.
+    public var live: LiveSettings?
 
     /// Whether synthesis is available on the paired computer. Deliberately
     /// provider-neutral: under ElevenLabs this is a key on file, while under
@@ -1668,4 +1744,8 @@ extension Message {
             return MessageVoiceNote(path: path, mime: attachment.mime, durationMs: attachment.durationMs)
         }
     }
+
+    /// A request a person spoke on a Live call. Only user lines get the
+    /// label: the bot's answers on a call are ordinary answers.
+    public var isViaCall: Bool { role == .user && via == "call" }
 }

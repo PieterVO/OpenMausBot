@@ -615,7 +615,7 @@ public struct CompanionClient: Sendable {
 
     // MARK: - Requests
 
-    private func makeRequest(_ method: String, _ path: String, query: [URLQueryItem] = [], body: [String: Any]? = nil) throws -> URLRequest {
+    func makeRequest(_ method: String, _ path: String, query: [URLQueryItem] = [], body: [String: Any]? = nil) throws -> URLRequest {
         guard let base = connection.baseURL,
               var components = URLComponents(url: base, resolvingAgainstBaseURL: false)
         else { throw APIError.badURL }
@@ -680,7 +680,7 @@ public struct CompanionClient: Sendable {
         return (try? JSONDecoder().decode(SendReceipt.self, from: data)) ?? SendReceipt()
     }
 
-    private func perform(_ request: URLRequest) async throws -> (Data, URLResponse) {
+    func perform(_ request: URLRequest) async throws -> (Data, URLResponse) {
         do {
             return try await session.data(for: request)
         } catch {
@@ -1200,6 +1200,57 @@ public struct CompanionClient: Sendable {
         return try await send(try makeRequest("GET", "/api/bots/\(botId)/overview"), as: BotOverview.self)
     }
 
+    /// What the bot did, newest first: every tool it used and every approval
+    /// it asked for, with the outcome. Read-only, like the overview.
+    public func activity(botId: String, limit: Int = 200) async throws -> [ActivityRow] {
+        guard Self.validRouteID(botId) else { throw APIError.badURL }
+        let query = [URLQueryItem(name: "limit", value: String(limit))]
+        return try await send(try makeRequest("GET", "/api/bots/\(botId)/activity", query: query), as: ActivityPage.self).rows
+    }
+
+    // MARK: - Team memory
+
+    /// The section's shared people, places, decisions and terms. The
+    /// section is a query parameter, empty for General, and always sent.
+    public func teamMemory(section: String) async throws -> TeamMemoryPage {
+        try await send(try makeRequest("GET", "/api/team-memory", query: [URLQueryItem(name: "section", value: section)]), as: TeamMemoryPage.self)
+    }
+
+    /// Add an entry by hand. The person's own entry never waits on the person.
+    public func addTeamMemory(section: String, kind: String, name: String, detail: String) async throws -> [TeamMemoryEntry] {
+        try await send(
+            try makeRequest("POST", "/api/team-memory", query: [URLQueryItem(name: "section", value: section)], body: ["kind": kind, "name": name, "detail": detail]),
+            as: TeamMemoryEdit.self
+        ).entries
+    }
+
+    /// Answer a proposal: remember it, or drop it.
+    public func answerTeamMemory(section: String, id: String, remember: Bool) async throws -> [TeamMemoryEntry] {
+        guard Self.validRouteID(id) else { throw APIError.badURL }
+        let query = [URLQueryItem(name: "section", value: section)]
+        if remember {
+            return try await send(try makeRequest("PATCH", "/api/team-memory/\(id)", query: query, body: ["accept": true]), as: TeamMemoryEdit.self).entries
+        }
+        return try await send(try makeRequest("DELETE", "/api/team-memory/\(id)", query: query), as: TeamMemoryEdit.self).entries
+    }
+
+    /// Change what an entry says. Editing a proposal accepts it.
+    public func updateTeamMemory(section: String, id: String, detail: String) async throws -> [TeamMemoryEntry] {
+        guard Self.validRouteID(id) else { throw APIError.badURL }
+        return try await send(
+            try makeRequest("PATCH", "/api/team-memory/\(id)", query: [URLQueryItem(name: "section", value: section)], body: ["detail": detail]),
+            as: TeamMemoryEdit.self
+        ).entries
+    }
+
+    public func removeTeamMemory(section: String, id: String) async throws -> [TeamMemoryEntry] {
+        guard Self.validRouteID(id) else { throw APIError.badURL }
+        return try await send(
+            try makeRequest("DELETE", "/api/team-memory/\(id)", query: [URLQueryItem(name: "section", value: section)]),
+            as: TeamMemoryEdit.self
+        ).entries
+    }
+
     // MARK: - Doing
 
     /// Make a new bot. The harness picks its name, colour and greeting — the
@@ -1544,6 +1595,65 @@ public struct CompanionClient: Sendable {
             }
     }
 
+    // MARK: - Live calls
+
+    /// How long a call may take to start. The Mac creates the OpenAI session
+    /// (up to 20 s) before it answers, and the sidecar allows 30 s until
+    /// response headers; the usual 20 s here would give up first.
+    public static let liveCallStartTimeout: TimeInterval = 35
+
+    /// Start a Live call: the phone's SDP offer goes to the Mac, which creates
+    /// the GPT-Live session with its own key and returns OpenAI's answer.
+    ///
+    /// The two 409s carry structure `check` would drop — `needsKey` (no key on
+    /// the Mac) and `activeCall` (who is on the line) — so they are read here
+    /// first and thrown as `LiveCallStartError`. Everything else is the usual
+    /// `APIError` with the Mac's own message.
+    public func startLiveCall(botId: String, threadId: String?, sdp: String) async throws -> LiveCallStart {
+        guard Self.validRouteID(botId), threadId.map(Self.validRouteID) ?? true else { throw APIError.badURL }
+        var body: [String: Any] = ["botId": botId, "sdp": sdp, "client": "ios"]
+        if let threadId { body["threadId"] = threadId }
+        var request = try makeRequest("POST", "/api/live/session", body: body)
+        request.timeoutInterval = Self.liveCallStartTimeout
+        let (data, response) = try await perform(request)
+        if let http = response as? HTTPURLResponse, http.statusCode == 409,
+           let refusal = try? JSONDecoder().decode(LiveCallRefusalBody.self, from: data) {
+            if refusal.needsKey == true { throw LiveCallStartError.needsKey(message: refusal.error) }
+            if let active = refusal.activeCall { throw LiveCallStartError.busy(active: active, message: refusal.error) }
+        }
+        try Self.check(response, data)
+        do {
+            return try JSONDecoder().decode(LiveCallStart.self, from: data)
+        } catch {
+            throw APIError.transport("The computer sent something this app couldn't read.")
+        }
+    }
+
+    /// Hang up. A 404 means the Mac no longer runs that call — which is what
+    /// the caller wanted — so it reads as `nil` rather than an error.
+    public func endLiveCall(callId: String) async throws -> LiveCallState? {
+        do {
+            return try await send(try makeRequest("POST", "/api/live/call/end", body: ["callId": callId]), as: LiveCallEnvelope.self).call
+        } catch let APIError.status(code, _) where code == 404 {
+            return nil
+        }
+    }
+
+    /// The call the Mac is running right now, if any. A phone that connects
+    /// mid-call asks this once after hydrating; the stream carries changes.
+    public func liveCall() async throws -> LiveCallState? {
+        try await send(try makeRequest("GET", "/api/live/call"), as: LiveCallEnvelope.self).call
+    }
+
+    /// Change the non-secret Live settings on the Mac. The key is not a
+    /// field on `LiveSettingsPatch`, and the Mac answers 400 if one is sent.
+    public func updateLiveSettings(_ patch: LiveSettingsPatch) async throws -> LiveSettings {
+        try await send(
+            try makeRequest("PATCH", "/api/live/settings", encodedBody: patch),
+            as: LiveSettingsEnvelope.self
+        ).live
+    }
+
     private static func validRouteID(_ value: String) -> Bool {
         !value.isEmpty && value.utf8.allSatisfy { byte in
             (48...57).contains(byte) || (65...90).contains(byte) || (97...122).contains(byte)
@@ -1740,6 +1850,11 @@ public struct CompanionClient: Sendable {
         try await send(try makeRequest("POST", "/api/bots/\(botId)/interrupt", body: threadId.map { ["threadId": $0] }))
     }
 
+    /// Stop a room's running turn, whichever member is speaking.
+    public func interrupt(groupId: String, threadId: String? = nil) async throws {
+        try await send(try makeRequest("POST", "/api/groups/\(groupId)/interrupt", body: threadId.map { ["threadId": $0] }))
+    }
+
     public func provideCredential(
         botId: String,
         messageId: String,
@@ -1882,7 +1997,7 @@ public struct CompanionClient: Sendable {
     /// time, and 1.8e308 does not survive that arithmetic: the request opens
     /// and then never delivers a byte. The stream appeared to hang forever
     /// with no error to show for it.
-    private static let streaming: URLSession = {
+    static let streaming: URLSession = {
         let configuration = URLSessionConfiguration.default
         configuration.timeoutIntervalForRequest = 90
         configuration.waitsForConnectivity = true

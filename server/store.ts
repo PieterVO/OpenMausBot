@@ -7,6 +7,7 @@ import { chmodSync, existsSync, readFileSync, mkdirSync, rmSync, statSync, unlin
 import { join } from "node:path";
 
 import { writeFileAtomic } from "./atomic.ts";
+import { parseToolScope, toolScopeWidens } from "../shared/tool-scope.ts";
 import { ensureSections, readSections, changeEmptySection } from "./section-context.ts";
 import type { TeamComputers } from "./team-computers.ts";
 import { removeBotFolder, soulFile, soulHash, writeSoulMirror } from "./bot-folder.ts";
@@ -73,9 +74,9 @@ export function isProjectEmoji(value: unknown): value is string {
 }
 
 /** One task = one conversation with its own context. Extends the shared
- * wire shape; the extras below are server-private bookkeeping the wire
- * projection (toWireTask) strips. */
-export interface TaskRecord extends WireTask {
+ * wire shape, less the fields the wire projection (toWireTask) derives; the
+ * extras below are server-private bookkeeping that projection strips. */
+export interface TaskRecord extends Omit<WireTask, TaskWireDerivedKeys> {
   /** provider-native continuation per instance, for THIS task only */
   resumeCursors: Record<string, unknown>;
   /** which instance dispatched the most recent turn. A cursor alone can't
@@ -92,7 +93,8 @@ export interface TaskRecord extends WireTask {
   /** Who pinned this conversation's surface: "user" when a person chose it
    * (composer chip or thread setting), "auto" when a turn recorded where
    * it landed. Absent means legacy/unknown: it may be a person's choice,
-   * so only positively identified auto pins yield to Works on changes. */
+   * so only positively identified auto pins yield to Works on changes.
+   * Clients see only whether a pin is an auto pin (WireTask.surfaceAuto). */
   surfaceSource?: "user" | "auto";
 }
 
@@ -100,7 +102,9 @@ export interface TaskRecord extends WireTask {
  * the exactness assertion below fails to compile when either side drifts,
  * so a new server field forces a decision — wire-visible or private here. */
 export type TaskWirePrivateKeys = "resumeCursors" | "lastInstanceId" | "handedMessages" | "appliedCompactionId" | "contextFloor" | "lastContextModel" | "surfaceSource";
-export type TaskWireProjection = Pick<TaskRecord, Exclude<keyof TaskRecord, TaskWirePrivateKeys>>;
+/** WireTask fields computed by toWireTask and never stored on a TaskRecord. */
+export type TaskWireDerivedKeys = "surfaceAuto";
+export type TaskWireProjection = Pick<TaskRecord, Exclude<keyof TaskRecord, TaskWirePrivateKeys>> & Pick<WireTask, TaskWireDerivedKeys>;
 type AssertExact<A, B> = [A] extends [B] ? ([B] extends [A] ? true : never) : never;
 type AssertSameKeys<A, B> = [keyof A] extends [keyof B] ? ([keyof B] extends [keyof A] ? true : never) : never;
 /** Structural exactness alone lets an optional extra field through (a type
@@ -113,8 +117,10 @@ export const taskWireProjectionIsExact: TaskWireProjectionIsExact = true;
 export function toWireTask(task: TaskRecord): WireTask {
   const { resumeCursors: _resumeCursors, lastInstanceId: _lastInstanceId, handedMessages: _handedMessages,
     appliedCompactionId: _appliedCompactionId, contextFloor: _contextFloor, lastContextModel: _lastContextModel,
-    surfaceSource: _surfaceSource, ...wire } = task;
-  return wire;
+    surfaceSource, ...wire } = task;
+  // Who pinned stays private. A client learns only whether the pin is the
+  // machine's own record, so it never presents one as the person's choice.
+  return surfaceSource === "auto" && wire.surface !== undefined ? { ...wire, surfaceAuto: true } : wire;
 }
 
 const TASK_PATCH_FIELDS = [
@@ -393,6 +399,9 @@ export interface BotRecord extends Omit<WireBot, "avatarUrl" | "tasks"> {
   /** Organization library only: each part's release and written hashes
    * (server/package-parts.ts), for the later automatic update. */
   packageBase?: Partial<Record<AgentPart, PartPair>>;
+  /** Skills library (features.skillsLibrary): names of library skills
+   * assigned to this bot. Server-private until the Skills UI ships. */
+  assignedSkills?: string[];
 }
 
 /** BotRecord fields no client may see, plus the two the projection
@@ -400,7 +409,7 @@ export interface BotRecord extends Omit<WireBot, "avatarUrl" | "tasks"> {
  * WireTask[], avatarUrl is coerced to always-present). The exactness
  * assertion fails to compile when either side drifts, so a new server
  * field forces a decision — wire-visible or private here. */
-export type BotWirePrivateKeys = "resumeCursors" | "tasks" | "avatarUrl" | "approvalGrant" | "lastProfileRequestId" | "lastTighteningRequestId" | "lastTeamSetupReceipt" | "packageBase";
+export type BotWirePrivateKeys = "resumeCursors" | "tasks" | "avatarUrl" | "approvalGrant" | "lastProfileRequestId" | "lastTighteningRequestId" | "lastTeamSetupReceipt" | "packageBase" | "assignedSkills";
 export type BotWireProjection = Pick<BotRecord, Exclude<keyof BotRecord, BotWirePrivateKeys>>;
 export type BotWireProjectionIsExact = AssertExact<Omit<WireBot, "avatarUrl" | "tasks">, BotWireProjection> & AssertSameKeys<Omit<WireBot, "avatarUrl" | "tasks">, BotWireProjection>;
 export const botWireProjectionIsExact: BotWireProjectionIsExact = true;
@@ -1591,7 +1600,7 @@ export class Store {
     const full: Message = { id: newId(), at: Date.now(), ...redactBotAuthored(message), parentId: anchorId };
     const children = t.messages.filter((m) => m.parentId === anchorId);
     t.messages.push(full);
-    mdb.appendMessage(threadId, full);
+    mdb.insertMessage(threadId, full); // the leaf stays where it was, in SQLite too
     if (full.kind === "screen") {
       for (const pruned of this.pruneScreenFrames(t)) {
         mdb.updateMessage(threadId, pruned);
@@ -1723,7 +1732,7 @@ export class Store {
     profile: Partial<
       Pick<
         BotRecord,
-        "name" | "title" | "description" | "soul" | "color" | "mascotExpression" | "mascotBody" | "modelSelection" | "section" | "cwd" | "visibility"
+        "name" | "title" | "description" | "soul" | "color" | "mascotExpression" | "mascotBody" | "modelSelection" | "section" | "cwd" | "visibility" | "toolScope"
       >
     > = {},
     opts: {
@@ -1732,6 +1741,8 @@ export class Store {
       seedMessages?: boolean;
     } = {},
   ): BotRecord {
+    const toolScope = parseToolScope(profile.toolScope);
+    if (!toolScope.ok) throw new Error(toolScope.error);
     this.rememberSections([profile.section]);
     const name = profile.name?.trim() || pickBotName(this.bots.map((b) => b.name));
     const section = sectionKey(profile.section);
@@ -1749,6 +1760,7 @@ export class Store {
       ...(profile.mascotBody ? { mascotBody: profile.mascotBody } : {}),
       // Restricted from its first frame: no one else is ever told it exists.
       ...(profile.visibility && profile.visibility !== "everyone" ? { visibility: structuredClone(profile.visibility) } : {}),
+      ...(toolScope.scope ? { toolScope: toolScope.scope } : {}),
       unread: false,
       modelSelection: this.newBotSelection(profile.modelSelection),
       resumeCursors: {},
@@ -1767,8 +1779,10 @@ export class Store {
       activity: "idle",
       busy: false,
     }];
+    // Persist the selection in the first record, before publishing the bot
+    // or starting its greeting. An interrupted creation cannot inherit tools.
+    this.saveBots([bot, ...this.bots]);
     this.bots.unshift(bot);
-    this.saveBots();
     // The folder exists from the first moment, so the user can open
     // SOUL.md before the bot has said a word. The record is canonical: a
     // mirror-write failure must never fail bot creation.
@@ -1954,6 +1968,17 @@ export class Store {
       if (!parsed.ok) throw new Error(parsed.error);
       patch = { ...patch, connectorTools: parsed.grants };
     }
+    if (Object.hasOwn(patch, "toolScope")) {
+      const parsed = parseToolScope(patch.toolScope);
+      if (!parsed.ok) throw new Error(parsed.error);
+      patch = { ...patch, toolScope: parsed.scope };
+    }
+    const wideningToolScope = Object.hasOwn(patch, "toolScope") && toolScopeWidens(bot.toolScope, patch.toolScope);
+    const nextToolScope = patch.toolScope;
+    if (wideningToolScope) {
+      patch = { ...patch };
+      delete patch.toolScope;
+    }
     // Runtime revocations must become effective in memory even when disk is
     // unavailable. Profile edits use the separate atomic path below.
     Object.assign(bot, patch);
@@ -1966,7 +1991,12 @@ export class Store {
       }
       bot.unread = bot.tasks!.some(taskCountsAsBotUnread);
     }
-    this.saveBots();
+    if (wideningToolScope) {
+      // New authority becomes live only after its durable save succeeds.
+      // Other runtime revocations above still take effect on a failed write.
+      this.saveBots(this.bots.map((candidate) => candidate === bot ? { ...bot, toolScope: nextToolScope } : candidate));
+      bot.toolScope = nextToolScope;
+    } else this.saveBots();
     this.emit({ type: "bot", botId: id });
     return bot;
   }
@@ -2428,6 +2458,15 @@ export class Store {
 
   taskByThread(botId: string, threadId: string): TaskRecord | undefined {
     return this.bot(botId)?.tasks?.find((t) => t.threadId === threadId);
+  }
+
+  /** The thread `fromBotId` opened on this bot from its conversation
+   * `fromThreadId` with coordinate_bots: one per conversation and teammate,
+   * so whatever that conversation sends later continues it. A thread the
+   * person archived is left alone. */
+  workThread(botId: string, fromBotId: string, fromThreadId: string): TaskRecord | undefined {
+    return this.tasks(botId).find((t) => t.openedBy?.kind === "work" && t.openedBy.botId === fromBotId &&
+      t.openedBy.threadId === fromThreadId && t.archivedAt === undefined);
   }
 
   /** A turn gets an independent snapshot without changing the selected task
