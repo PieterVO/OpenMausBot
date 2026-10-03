@@ -1798,6 +1798,28 @@
         }
       }
     },
+    "and %lld more of this computer’s addresses": {
+      "localizations": {
+        "pt-BR": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "e mais %lld endereço(s) deste computador"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "以及这台电脑的另外 %lld 个地址"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "以及這部電腦的另外 %lld 個位址"
+          }
+        }
+      }
+    },
     "Computer only": {
       "localizations": {
         "pt-BR": {
