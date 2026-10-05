@@ -167,6 +167,7 @@ struct NeedsYouIsland: View {
             }
         }
         .frame(maxWidth: .infinity, alignment: .top)
+        .allowsHitTesting(expanded)
         .animation(.spring(response: 0.55, dampingFraction: 0.78), value: expanded)
         .onValueChange(of: update?.card?.requestId) { _ in reconcile() }
         .onAppear { reconcile() }
