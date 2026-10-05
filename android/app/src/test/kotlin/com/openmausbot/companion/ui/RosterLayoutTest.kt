@@ -7,7 +7,6 @@ import com.openmausbot.companion.core.Message
 import com.openmausbot.companion.core.OptionCard
 import com.openmausbot.companion.core.PendingApproval
 import com.openmausbot.companion.core.Session
-import java.util.Locale
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
@@ -134,22 +133,6 @@ class RosterLayoutTest {
             "Not paired · offline",
             RosterLayout.headerSubtitle(null, Session.Status.Offline("x")),
         )
-    }
-
-    @Test
-    fun `section headings uppercase by the invariant rules`() {
-        val original = Locale.getDefault()
-        try {
-            Locale.setDefault(Locale.forLanguageTag("tr-TR"))
-            // `text.uppercased()` in Swift is canonical, not localised: a Turkish
-            // reader must still see BOTS and CHATS, not a dotted capital I.
-            assertEquals("BOTS", RosterLayout.sectionLabel("Bots"))
-            assertEquals("GROUPS", RosterLayout.sectionLabel("Groups"))
-            assertEquals("CHATS", RosterLayout.sectionLabel("Chats"))
-            assertEquals("MESSAGES", RosterLayout.sectionLabel("Messages"))
-        } finally {
-            Locale.setDefault(original)
-        }
     }
 }
 

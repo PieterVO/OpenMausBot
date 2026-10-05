@@ -1,6 +1,7 @@
 package com.openmausbot.companion.ui
 
 import android.content.Context
+import android.graphics.Bitmap
 import androidx.activity.ComponentActivity
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.material3.Surface
@@ -9,9 +10,11 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.MotionDurationScale
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.LocalLayoutDirection
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.SemanticsActions
 import androidx.compose.ui.semantics.SemanticsProperties
@@ -55,6 +58,7 @@ import androidx.compose.ui.text.TextLayoutResult
 import androidx.compose.ui.text.style.Hyphens
 import androidx.compose.ui.unit.Density
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.LayoutDirection
 import com.openmausbot.companion.core.Bot
 import com.openmausbot.companion.core.BotTask
 import com.openmausbot.companion.core.ChatTarget
@@ -69,6 +73,7 @@ import com.openmausbot.companion.core.StreamFrame
 import com.openmausbot.companion.core.rosterStatus
 import com.openmausbot.companion.core.rosterThreadCount
 import com.openmausbot.companion.storage.ChatPreferences
+import java.io.File
 import java.util.concurrent.ConcurrentLinkedQueue
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
@@ -92,6 +97,7 @@ import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
 import org.robolectric.RuntimeEnvironment
 import org.robolectric.annotation.Config
+import org.robolectric.shadows.ShadowDialog
 import org.robolectric.annotation.GraphicsMode
 
 /**
@@ -124,6 +130,7 @@ class RosterScreenTest {
     private lateinit var scene: WiringScene
     private val requests = ConcurrentLinkedQueue<RecordedRequest>()
     private var answerCreate: (RecordedRequest) -> MockResponse = { MockResponse().setResponseCode(503) }
+    private val appearance = mutableStateOf(AppearanceSkin.LINEN)
 
     @Before
     fun startServer() {
@@ -211,7 +218,7 @@ class RosterScreenTest {
     }
 
     @Test
-    fun `status is a small mark, a hand while waiting and a spinner in place of the time while working`() {
+    fun `status belongs to the face, a hand while waiting and a ring while working`() {
         mount()
         reveal("chat-row.${RosterFixture.WAITING}")
             .assert(hasContentDescription("Waiting on you"))
@@ -447,7 +454,7 @@ class RosterScreenTest {
         compose.onNodeWithText("No bots yet").assertDoesNotExist()
 
         compose.runOnIdle { scene.environment.chatPreferences.setRosterDensity(RosterDensity.COMFORTABLE) }
-        compose.onAllNodesWithText("GROUPS").onFirst().assertIsDisplayed()
+        compose.onAllNodesWithText("Groups").onFirst().assertIsDisplayed()
         compose.onNodeWithText("No bots yet").assertDoesNotExist()
     }
 
@@ -500,7 +507,7 @@ class RosterScreenTest {
             compose.waitForIdle()
             list().performScrollToIndex(0)
             val header = compose.onNodeWithTag("roster-header").getBoundsInRoot()
-            val firstTitle = compose.onNodeWithText("NEEDS ATTENTION").getBoundsInRoot()
+            val firstTitle = compose.onNodeWithText("Needs attention").getBoundsInRoot()
             assertTrue(firstTitle.top >= header.bottom, "$density: the first title starts under the header")
 
             toEnd()
@@ -549,6 +556,107 @@ class RosterScreenTest {
         val layout = textLayout(compose.onNodeWithTag("bot-name.${RosterFixture.TWO_WORDS}", useUnmergedTree = true))
         assertWrapsBetweenWords(layout)
         assertEquals(listOf("Bo", "Christoffersen"), lines(layout))
+    }
+
+    @Test
+    fun `contact faces and attention badges render in compact light and dark`() {
+        mount()
+        compose.onNodeWithText("Needs attention").assertIsDisplayed()
+        compose.onNodeWithText("NEEDS ATTENTION").assertDoesNotExist()
+        compose.onNode(
+            hasTestTag("roster-face-badge.waiting") and
+                hasAnyAncestor(hasTestTag("attention-row.${RosterFixture.WAITING}-roster-scout-checklist")),
+            useUnmergedTree = true,
+        ).assertIsDisplayed()
+        compose.onNodeWithTag("updates-needs-you-count", useUnmergedTree = true).assertIsDisplayed()
+        compose.onNodeWithTag("updates-working-count", useUnmergedTree = true).assertIsDisplayed()
+        screenshot("compact-light")
+        compose.runOnIdle { appearance.value = AppearanceSkin.MIDNIGHT }
+        screenshot("compact-dark")
+        reveal("chat-row.${RosterFixture.WORKING}")
+        compose.onNode(
+            hasTestTag("roster-working-indicator") and
+                hasAnyAncestor(hasTestTag("chat-row.${RosterFixture.WORKING}")),
+            useUnmergedTree = true,
+        ).assertIsDisplayed().assert(hasContentDescription("Working"))
+        reveal("chat-row.${RosterFixture.WAITING}")
+        screenshot("compact-bots-dark")
+        compose.runOnIdle { appearance.value = AppearanceSkin.LINEN }
+        screenshot("compact-bots-light")
+    }
+
+    @Test
+    fun `comfortable shows the reply preview and time with contact faces in both appearances`() {
+        mount(density = RosterDensity.COMFORTABLE)
+        compose.onNodeWithText("Three reviews and one approval. I put them in order.").assertIsDisplayed()
+        compose.onNodeWithTag("chat-row.${RosterFixture.CHIEF}").assert(hasText(stamp("roster-atlas-plan")))
+        screenshot("comfortable-light")
+        compose.runOnIdle { appearance.value = AppearanceSkin.MIDNIGHT }
+        screenshot("comfortable-dark")
+        reveal("chat-row.${RosterFixture.WAITING}").assert(hasContentDescription("Waiting on you"))
+        screenshot("comfortable-bots-dark")
+        compose.runOnIdle { appearance.value = AppearanceSkin.LINEN }
+        screenshot("comfortable-bots-light")
+    }
+
+    @Test
+    fun `Updates uses the same face badges and roomy inline answer targets in both appearances`() {
+        mount(fontScale = 1.3f)
+        compose.onNodeWithTag("updates-bar").performClick()
+        // Keep the native partial detent in production; expand through its actual
+        // accessibility action for the overview capture rather than changing the sheet.
+        compose.onNode(SemanticsMatcher.keyIsDefined(SemanticsActions.Expand))
+            .performSemanticsAction(SemanticsActions.Expand) { it() }
+        compose.onNodeWithTag("updates-list").assertIsDisplayed()
+        compose.onNodeWithText("Needs you").assertIsDisplayed()
+        compose.onNodeWithText("NEEDS YOU").assertDoesNotExist()
+        compose.onNodeWithText("Allow").assertIsDisplayed()
+        val allow = compose.onNodeWithText("Allow").getBoundsInRoot()
+        assertTrue(allow.bottom - allow.top >= MIN_TOUCH_TARGET, "inline approval needs a 48 dp target")
+        screenshot("updates-light", dialog = true)
+        compose.runOnIdle { appearance.value = AppearanceSkin.MIDNIGHT }
+        screenshot("updates-dark", dialog = true)
+        compose.onNodeWithTag("updates-list")
+            .performScrollToNode(hasTestTag("update-row.room:${RosterFixture.GROUP}:roster-general-thread"))
+        screenshot("updates-review-dark", dialog = true)
+        compose.runOnIdle { appearance.value = AppearanceSkin.LINEN }
+        screenshot("updates-review-light", dialog = true)
+    }
+
+    @Test
+    fun `all eight skins keep home controls reachable at font scale 1 point 3 in RTL`() {
+        mount(fontScale = 1.3f, rtl = true)
+        AppearanceSkin.entries.forEach { skin ->
+            compose.runOnIdle { appearance.value = skin }
+            compose.onNodeWithTag("updates-bar").assertIsDisplayed()
+            compose.onNodeWithContentDescription("Search").assertIsDisplayed()
+            compose.onNodeWithTag("open-calendar").assertIsDisplayed()
+            reveal("threads-toggle.${RosterFixture.THREE_THREADS}").assertIsDisplayed()
+            reveal("chat-row.${RosterFixture.WAITING}").assert(hasContentDescription("Waiting on you"))
+        }
+        list().performScrollToIndex(0)
+        compose.runOnIdle { appearance.value = AppearanceSkin.MIDNIGHT }
+        screenshot("compact-rtl-font-1.3-dark")
+        compose.runOnIdle {
+            appearance.value = AppearanceSkin.LINEN
+            scene.environment.chatPreferences.setRosterDensity(RosterDensity.COMFORTABLE)
+        }
+        list().performScrollToIndex(0)
+        screenshot("comfortable-rtl-font-1.3-light")
+    }
+
+    private fun screenshot(name: String, dialog: Boolean = false) {
+        compose.waitForIdle()
+        compose.runOnIdle {
+            val view = if (dialog) checkNotNull(ShadowDialog.getLatestDialog().window).decorView
+                else compose.activity.window.decorView
+            val bitmap = Bitmap.createBitmap(view.width, view.height, Bitmap.Config.ARGB_8888)
+            view.draw(android.graphics.Canvas(bitmap))
+            val file = File("build/outputs/roster-screenshots/$name.png")
+            file.parentFile?.mkdirs()
+            file.outputStream().use { bitmap.compress(Bitmap.CompressFormat.PNG, 100, it) }
+            bitmap.recycle()
+        }
     }
 
     private fun list(): SemanticsNodeInteraction = compose.onNodeWithTag("roster-list")
@@ -631,6 +739,7 @@ class RosterScreenTest {
         density: RosterDensity? = null,
         fleet: Fleet = RosterFixture.fleet(),
         frames: Flow<StreamFrame>? = null,
+        rtl: Boolean = false,
     ): CompanionNavigator {
         context.getSharedPreferences(ChatPreferences.NAME, Context.MODE_PRIVATE).edit().clear().commit()
         val navigator = CompanionNavigator()
@@ -650,8 +759,9 @@ class RosterScreenTest {
             CompositionLocalProvider(
                 LocalCompanion provides scene.environment,
                 LocalDensity provides Density(base.density, fontScale),
+                LocalLayoutDirection provides if (rtl) LayoutDirection.Rtl else LayoutDirection.Ltr,
             ) {
-                CompanionTheme(darkTheme = false) {
+                CompanionTheme(skin = appearance.value) {
                     Surface(Modifier.fillMaxSize()) {
                         val state by scene.session.state.collectAsState()
                         if (state.bots.isNotEmpty()) Screens(navigator)

@@ -184,10 +184,4 @@ internal object UpdatesSummary {
         UpdateKind.TO_REVIEW -> "To review"
     }
 
-    /**
-     * The heading as the sheet draws it. Uppercased by the invariant rules, which
-     * is what Swift's `uppercased()` does — a reader in `tr-TR` must still read
-     * WORKING and not WORKİNG.
-     */
-    fun sectionLabel(kind: UpdateKind): String = section(kind).uppercase()
 }

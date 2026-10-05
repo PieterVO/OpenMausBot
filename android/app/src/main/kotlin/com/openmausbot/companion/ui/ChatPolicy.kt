@@ -336,13 +336,6 @@ object RosterLayout {
         }
     }
 
-    /**
-     * A section heading. Uppercased by the invariant rules, which is what Swift's
-     * `uppercased()` does — a reader in `tr-TR` must still read BOTS, not BOTS
-     * spelled with a dotted capital.
-     */
-    fun sectionLabel(text: String): String = text.uppercase()
-
     private const val NOT_PAIRED = "Not paired"
 }
 
