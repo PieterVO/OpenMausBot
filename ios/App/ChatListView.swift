@@ -271,6 +271,7 @@ struct ChatListView: View {
                     .lineLimit(1)
             }
             .padding(.horizontal, 104)
+            .allowsHitTesting(false)
         }
         .padding(.horizontal, 16)
         .padding(.top, 4)
