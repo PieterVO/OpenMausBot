@@ -28,7 +28,8 @@ against that explicit simulator ID. For example, from `ios/`:
 ```sh
 xcodebuild -project OpenMausCompanion.xcodeproj -scheme OpenMausCompanion \
   -configuration Debug -destination 'platform=iOS Simulator,id=SIMULATOR_ID' \
-  -derivedDataPath /tmp/omb-ios-threads-build CODE_SIGNING_ALLOWED=NO test
+  -derivedDataPath /tmp/omb-ios-threads-build -packageAuthorizationProvider netrc \
+  CODE_SIGNING_ALLOWED=NO test
 ```
 
 `ThreadNavigationUITests` launches with `-store-preview -threads-preview`.
@@ -60,6 +61,48 @@ closes; that
 launches; and, in both densities, that the first section title clears the
 header's buttons and the last row, scrolled to the end, sits wholly above the
 floating Updates bar.
+
+### Home and Updates presentation
+
+Both densities keep the same native navigation and thread controls. Attention
+rows now start with the bot's own face (32pt compact, 40pt comfortable), with a
+hand, working arc, clock, or unread bell attached to its bottom-trailing corner.
+Bot rows use 32pt/44pt faces: the bot's colour carries a slow working arc, and
+waiting attaches a hand badge. Unread dots use the shared deep blue `#2E6FDB`,
+not the bot's colour. A teammate wait stays a quiet clock, never a spinner.
+Reduce Motion replaces each rotating arc with a static ring; inactive scenes
+pause it. Section headers retain their localized copy in sentence case.
+
+Comfortable still shows the last-message preview and relative time, with
+larger text wrapping rather than a fixed-size row. The Updates pill keeps
+stacked faces, an orange needs-you count, and a subtle working spinner/count.
+Updates uses the same face/status language and 20pt rounded cards; queued sends
+and teammate waits carry a clock instead of a working arc. Inline
+answer buttons remain separate from the open-chat button and have 44pt minimum
+targets; skill approvals still open the chat for review. The sheet's Done
+button supplements native swipe-to-dismiss.
+
+`RosterDensityUITests` additionally checks attention labels, sentence-case
+headers, Updates counts and statuses, navigation from Updates to the exact
+thread, disclosure/Updates reachability at XXL with RTL layout, and that tapping
+an inline answer does not also navigate into its chat.
+For visual review, launch the offline app with each fixture and density:
+
+```text
+-store-preview -roster-preview -companion.prefs.rosterDensity compact
+-store-preview -roster-preview -companion.prefs.rosterDensity comfortable
+-store-preview -threads-preview -companion.prefs.rosterDensity compact
+-store-preview -threads-preview -companion.prefs.rosterDensity comfortable
+```
+
+Append `-open-updates` to open the Updates sheet without pairing or UI
+automation. Use `-store-preview -open-updates` without a roster/thread flag to
+exercise the bundled approval's inline Allow/Deny buttons. Disable the island
+introduction with `-companion.prefs.islandIntro never`. Capture each fixture/density in light and
+dark with `xcrun simctl status_bar SIMULATOR_ID override --time 9:41` and
+`xcrun simctl io SIMULATOR_ID screenshot PATH`. Include the Updates sheet and
+an XXL/RTL pass; screenshot evidence belongs in
+`.impeccable/review/ios-home/` within the implementing worktree.
 
 Check on iPhone and iPad:
 

@@ -112,8 +112,8 @@ final class RosterDensityUITests: XCTestCase {
         XCTAssertTrue(app.buttons["threads-toggle.roster-pepper"].waitForExistence(timeout: 10))
 
         chooseDensity("Comfortable", in: app)
-        // Comfortable is the original look: a Threads row under every bot,
-        // the last message under each name, and groups as tiles.
+        // Comfortable keeps its previews, Threads rows, and group tiles,
+        // while sharing the compact list's face-and-status language.
         XCTAssertTrue(app.buttons["threads-toggle.roster-atlas"].waitForExistence(timeout: 5))
         XCTAssertTrue(contains("Three reviews and one approval", in: app))
         XCTAssertFalse(app.buttons["new-group"].exists)
@@ -174,6 +174,87 @@ final class RosterDensityUITests: XCTestCase {
         }
     }
 
+    @MainActor
+    func testUpdatesKeepThreadDestinationsAndStatusInBothDensities() {
+        for density in ["compact", "comfortable"] {
+            let app = launchRoster(density: density)
+            let attention = app.buttons["attention-roster-scout-testflight"]
+            XCTAssertTrue(attention.waitForExistence(timeout: 10))
+            XCTAssertTrue(attention.label.contains("Scout"))
+            XCTAssertTrue(attention.label.contains("Waiting on you"))
+            XCTAssertEqual(app.staticTexts["Needs attention"].label, "Needs attention")
+
+            let updates = app.buttons["updates-button"]
+            XCTAssertTrue((updates.value as? String)?.contains("Needs you 1") == true)
+            updates.tap()
+            let scout = app.buttons["update-roster-scout-testflight"]
+            XCTAssertTrue(scout.waitForExistence(timeout: 5))
+            XCTAssertEqual(scout.value as? String, "Waiting on you")
+            XCTAssertEqual(app.buttons["update-roster-pepper-gmail"].value as? String, "Working")
+            XCTAssertEqual(app.buttons["update-roster-pepper-weekend"].value as? String, "Queued")
+            recordScreenshot("Face and status in Updates, \(density)", in: app)
+            scout.tap()
+            assertThread("TestFlight checklist", in: app)
+            app.buttons["Back"].tap()
+            XCTAssertTrue(updates.waitForExistence(timeout: 5))
+        }
+    }
+
+    @MainActor
+    func testXXLAndRTLKeepDisclosureAndUpdatesReachable() {
+        for density in ["compact", "comfortable"] {
+            let app = launchRoster(
+                density: density,
+                extraArguments: [
+                    "-UIPreferredContentSizeCategoryName", "UICTContentSizeCategoryXXL",
+                    "-AppleTextDirection", "YES", "-NSForceRightToLeftWritingDirection", "YES"
+                ]
+            )
+            let updates = app.buttons["updates-button"]
+            XCTAssertGreaterThanOrEqual(updates.frame.height, 44)
+            XCTAssertTrue(updates.isHittable)
+            let toggle = app.buttons["threads-toggle.roster-pepper"]
+            var swipes = 0
+            while !(toggle.exists && toggle.isHittable), swipes < 10 {
+                app.scrollViews["roster-list"].swipeUp()
+                swipes += 1
+            }
+            // Hittable can include the strip beneath the floating bar; as
+            // in the normal-density test, bring the control wholly clear.
+            scrollToUpperHalf(toggle, in: app)
+            XCTAssertTrue(toggle.isHittable)
+            XCTAssertGreaterThanOrEqual(toggle.frame.height, 44)
+            toggle.tap()
+            XCTAssertEqual(toggle.value as? String, "Expanded, 3 threads")
+            recordScreenshot("XXL RTL threads, \(density)", in: app)
+            updates.tap()
+            XCTAssertTrue(app.buttons["update-roster-scout-testflight"].waitForExistence(timeout: 5))
+            XCTAssertTrue(app.buttons["Done"].isHittable)
+            recordScreenshot("XXL RTL Updates, \(density)", in: app)
+            app.buttons["Done"].tap()
+            XCTAssertTrue(updates.waitForExistence(timeout: 5))
+        }
+    }
+
+    @MainActor
+    func testInlineAnswersDoNotAlsoOpenTheConversation() {
+        continueAfterFailure = false
+        let app = XCUIApplication()
+        app.terminate()
+        app.launchArguments = Self.baseArguments.filter { $0 != "-roster-preview" } + ["-open-updates"]
+        app.launch()
+        let allow = app.buttons["Allow"]
+        XCTAssertTrue(allow.waitForExistence(timeout: 10))
+        XCTAssertGreaterThanOrEqual(allow.frame.height, 44)
+        XCTAssertGreaterThanOrEqual(app.buttons["Deny"].frame.height, 44)
+        allow.tap()
+        // The fixture has no client, so this action stays isolated. It must
+        // not accidentally tap the separate open-chat button.
+        XCTAssertTrue(app.buttons["Done"].waitForExistence(timeout: 5))
+        XCTAssertFalse(app.buttons["thread-switcher"].exists)
+        recordScreenshot("Inline answer stays in Updates", in: app)
+    }
+
     // MARK: - Helpers
 
     private static let baseArguments = [
@@ -187,12 +268,13 @@ final class RosterDensityUITests: XCTestCase {
     /// `nil` starts from the install default: a density saved by an earlier
     /// run on this simulator is removed first.
     @MainActor
-    private func launchRoster(density: String?) -> XCUIApplication {
+    private func launchRoster(density: String?, extraArguments: [String] = []) -> XCUIApplication {
         continueAfterFailure = false
         let app = XCUIApplication()
         app.terminate()
         app.launchArguments = Self.baseArguments
             + (density.map { ["-companion.prefs.rosterDensity", $0] } ?? ["-reset-list-density"])
+            + extraArguments
         app.launch()
         if app.buttons["Connect computer"].exists {
             app.terminate()

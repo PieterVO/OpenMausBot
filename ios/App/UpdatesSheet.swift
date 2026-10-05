@@ -19,13 +19,19 @@ struct UpdatesSheet: View {
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 0) {
-                HStack(alignment: .firstTextBaseline) {
-                    Text("Updates")
-                        .font(.system(size: 22, weight: .bold))
+                HStack(alignment: .center) {
+                    VStack(alignment: .leading, spacing: 3) {
+                        Text("Updates")
+                            .font(.title2.bold())
+                        Text(updates.isEmpty ? "All quiet" : "\(updates.count) active")
+                            .font(.caption)
+                            .monospacedDigit()
+                            .foregroundStyle(Color.secondary)
+                    }
                     Spacer()
-                    Text(updates.isEmpty ? "All quiet" : "\(updates.count) active")
-                        .font(.system(size: 13))
-                        .foregroundStyle(Color.secondary)
+                    Button("Done") { dismiss() }
+                        .font(.body.weight(.semibold))
+                        .frame(minWidth: 44, minHeight: 44)
                 }
                 .padding(.horizontal, 20)
                 .padding(.top, 22)
@@ -39,34 +45,35 @@ struct UpdatesSheet: View {
                     )
                     .padding(.top, 24)
                 } else {
-                    section("Needs you", tint: nil, kind: .needsYou)
-                    section("Working", tint: nil, kind: .working)
-                    section("To review", tint: nil, kind: .toReview)
+                    section("Needs you", kind: .needsYou)
+                    section("Working", kind: .working)
+                    section("To review", kind: .toReview)
                 }
             }
             .padding(.bottom, 24)
         }
+        .background(Color(uiColor: .systemGroupedBackground))
+        .accessibilityIdentifier("updates-sheet")
         .presentationDetents([.medium, .large])
         .presentationDragIndicator(.visible)
         .sheetChromeCompat()
     }
 
     @ViewBuilder
-    private func section(_ title: LocalizedStringKey, tint: Color?, kind: ChatUpdate.Kind) -> some View {
+    private func section(_ title: LocalizedStringKey, kind: ChatUpdate.Kind) -> some View {
         let items = updates.filter { $0.kind == kind }
         if !items.isEmpty {
-            let color = kind == .needsYou ? MausPalette.color(items[0].chat.color) : Color.secondary
             Text(title)
-                .textCase(.uppercase)
-                .font(.system(size: 12, weight: .bold))
-                .tracking(0.5)
-                .foregroundStyle(color)
+                .font(.subheadline.weight(.semibold))
+                .foregroundStyle(Color.secondary)
                 .padding(.horizontal, 20)
-                .padding(.top, 14)
-                .padding(.bottom, 2)
+                .padding(.top, 20)
+                .padding(.bottom, 8)
 
             ForEach(items) { update in
                 UpdateRow(update: update) { open(update.chat) }
+                    .padding(.horizontal, 16)
+                    .padding(.bottom, 8)
             }
         }
     }
@@ -76,92 +83,120 @@ private struct UpdateRow: View {
     let update: ChatUpdate
     let open: () -> Void
     @EnvironmentObject private var session: Session
+    @Environment(\.dynamicTypeSize) private var typeSize
+    @ScaledMetric(relativeTo: .body) private var scaledFace: CGFloat = 40
     @State private var answering = false
 
+    private var queued: Bool {
+        session.state.pendingQueued[update.chat.threadId]?.isEmpty == false
+    }
+
+    private var waitingOnTeammate: Bool {
+        if case let .bot(bot) = update.chat { return bot.waitingOnTeammate == true }
+        return false
+    }
+
+    private var badge: RosterFaceBadge? {
+        switch update.kind {
+        case .needsYou: .waiting
+        case .working: queued || waitingOnTeammate ? .queued : nil
+        case .toReview: .unread
+        }
+    }
+
     var body: some View {
-        Button(action: open) {
-            HStack(alignment: .top, spacing: 12) {
-                ChatAvatarView(chat: update.chat, size: 40, state: MausState.forChat(update.chat, in: session.state))
+        VStack(alignment: .leading, spacing: 0) {
+            Button(action: open) {
+                HStack(alignment: .top, spacing: 12) {
+                    RosterFace(
+                        color: update.chat.color, size: min(scaledFace, 48),
+                        working: update.kind == .working && !queued && !waitingOnTeammate, badge: badge
+                    ) {
+                        ChatAvatarView(
+                            chat: update.chat, size: min(scaledFace, 48),
+                            state: MausState.forChat(update.chat, in: session.state)
+                        )
+                    }
 
-                VStack(alignment: .leading, spacing: 3) {
-                    Text(update.chat.name)
-                        .font(.system(size: 15, weight: .semibold))
-                        .foregroundStyle(Color.primary)
-                    Text(update.chat.threadTitle)
-                        .font(.system(size: 12, weight: .medium))
-                        .foregroundStyle(Color.secondary)
-                        .lineLimit(1)
-                    Text(update.line.isEmpty ? " " : update.line)
-                        .font(.system(size: 14))
-                        .foregroundStyle(Color.secondary)
-                        .lineLimit(update.kind == .needsYou ? 3 : 1)
-                        .multilineTextAlignment(.leading)
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text(update.chat.name)
+                            .font(.body.weight(.semibold))
+                            .foregroundStyle(Color.primary)
+                        Text(update.chat.threadTitle)
+                            .font(.caption)
+                            .foregroundStyle(Color.secondary)
+                            .lineLimit(typeSize.isAccessibilitySize ? 3 : 1)
+                        Text(update.line.isEmpty ? " " : update.line)
+                            .font(.subheadline)
+                            .foregroundStyle(Color.secondary)
+                            .lineLimit(update.kind == .needsYou || typeSize.isAccessibilitySize ? 3 : 2)
+                            .multilineTextAlignment(.leading)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                    }
+                    .frame(maxWidth: .infinity, alignment: .leading)
 
-                    if update.kind == .needsYou, let card = update.card, card.isPending {
-                        if card.skillRequest != nil {
-                            Label("Open the chat to review SKILL.md", systemImage: "doc.text.magnifyingglass")
-                                .font(.system(size: 12, weight: .medium))
-                                .foregroundStyle(Color.secondary)
-                                .padding(.top, 6)
-                        } else {
-                            // The answers, as pills, from the one rule every
-                            // compact surface shares — never a choice
-                            // invented here.
-                            HStack(spacing: 8) {
-                                ForEach(update.answerOptions, id: \.self) { option in
-                                    Button {
-                                        Haptics.selection()
-                                        answering = true
-                                        Task {
-                                            await session.answer(chat: update.chat, card: card, choice: option)
-                                            answering = false
-                                        }
-                                    } label: {
-                                        Text(option)
-                                            .font(.system(size: 13, weight: .semibold))
-                                            .foregroundStyle(CardStyle.isRefusal(option) ? Color.primary : .white)
-                                            .padding(.horizontal, 14)
-                                            .frame(height: 32)
-                                            .background(
-                                                Capsule().fill(
-                                                    CardStyle.isRefusal(option)
-                                                        ? Color.secondary.opacity(0.18)
-                                                        : MausPalette.color(update.chat.color)
-                                                )
-                                            )
-                                    }
-                                    .buttonStyle(.plain)
-                                    .disabled(answering)
+                    Image(systemName: "chevron.forward")
+                        .font(.caption.weight(.semibold))
+                        .foregroundStyle(Color.secondary)
+                        .padding(.top, 12)
+                }
+                .padding(14)
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .accessibilityIdentifier("update-\(update.chat.threadId)")
+            .accessibilityValue(update.kind == .needsYou ? "Waiting on you" : queued ? "Queued" : waitingOnTeammate ? "Waiting on teammate" : update.kind == .working ? "Working" : "Unread")
+
+            if update.kind == .needsYou, let card = update.card, card.isPending {
+                if card.skillRequest != nil {
+                    Button(action: open) {
+                        Label("Open the chat to review SKILL.md", systemImage: "doc.text.magnifyingglass")
+                            .font(.footnote.weight(.medium))
+                            .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
+                    }
+                    .buttonStyle(.plain)
+                    .foregroundStyle(Color.secondary)
+                    .padding(.horizontal, 14)
+                    .padding(.bottom, 10)
+                } else {
+                    // Answers are siblings of the open-chat button, so a tap
+                    // can never both answer and navigate. Adaptive columns
+                    // keep every choice readable at large text sizes.
+                    LazyVGrid(columns: [GridItem(.adaptive(minimum: typeSize.isAccessibilitySize ? 180 : 110))], spacing: 8) {
+                        ForEach(update.answerOptions, id: \.self) { option in
+                            Button {
+                                Haptics.selection()
+                                answering = true
+                                Task {
+                                    await session.answer(chat: update.chat, card: card, choice: option)
+                                    answering = false
                                 }
+                            } label: {
+                                Text(option)
+                                    .font(.subheadline.weight(.semibold))
+                                    .multilineTextAlignment(.center)
+                                    .foregroundStyle(CardStyle.isRefusal(option) ? Color.primary : .white)
+                                    .padding(.horizontal, 14)
+                                    .padding(.vertical, 10)
+                                    .frame(maxWidth: .infinity, minHeight: 44)
+                                    .background(
+                                        Capsule().fill(
+                                            CardStyle.isRefusal(option)
+                                                ? Color.secondary.opacity(0.14)
+                                                : RosterStyle.unread
+                                        )
+                                    )
                             }
-                            .padding(.top, 6)
+                            .buttonStyle(.plain)
+                            .disabled(answering)
                         }
                     }
-                }
-
-                Spacer(minLength: 0)
-
-                switch update.kind {
-                case .needsYou:
-                    EmptyView()
-                case .working:
-                    ProgressView().controlSize(.small).padding(.top, 10)
-                case .toReview:
-                    HStack(spacing: 6) {
-                        Circle().fill(MausPalette.color(update.chat.color)).frame(width: 10, height: 10)
-                        Image(systemName: "chevron.right")
-                            .font(.system(size: 13, weight: .semibold))
-                            .foregroundStyle(Color.secondary.opacity(0.5))
-                    }
-                    .padding(.top, 12)
+                    .padding(.horizontal, 14)
+                    .padding(.bottom, 14)
                 }
             }
-            .padding(.horizontal, 20)
-            .padding(.vertical, 10)
-            .contentShape(Rectangle())
         }
-        .buttonStyle(.plain)
-        .accessibilityIdentifier("update-\(update.chat.threadId)")
+        .background(RoundedRectangle(cornerRadius: 20, style: .continuous).fill(Color(uiColor: .secondarySystemGroupedBackground)))
     }
 }
 

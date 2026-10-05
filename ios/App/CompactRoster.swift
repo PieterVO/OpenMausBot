@@ -18,7 +18,7 @@ enum CompactRosterMetrics {
     static let faceSpacing: CGFloat = 10
     static let trailing: CGFloat = 16
     /// The face, before Dynamic Type scales it.
-    static let face: CGFloat = 26
+    static let face: CGFloat = 32
     /// Scaled faces stop growing here, so the largest text sizes spend
     /// their width on names rather than on pictures.
     static let maxFace: CGFloat = 40
@@ -53,6 +53,8 @@ struct CompactBotEntry: View {
 
     @EnvironmentObject private var session: Session
     @Environment(\.dynamicTypeSize) private var typeSize
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @Environment(\.layoutDirection) private var layoutDirection
     @ScaledMetric(relativeTo: .body) private var scaledFace = CompactRosterMetrics.face
     /// Wakes the list when a timed snooze ends, so the count and the list
     /// fold that thread back in without waiting for a snapshot.
@@ -93,17 +95,18 @@ struct CompactBotEntry: View {
         HStack(spacing: 0) {
             Button(action: openRow) {
                 HStack(spacing: 0) {
-                    UnreadDot(visible: row.showsUnreadDot, color: bot.color)
-                    BotAvatarView(
-                        bot: bot, size: face,
-                        state: MausState.forChat(.bot(bot), in: session.state),
-                        animated: false
-                    )
-                    .accessibilityHidden(true)
+                    UnreadDot(visible: row.showsUnreadDot)
+                    RosterFace(
+                        color: bot.color, size: face,
+                        working: row.showsSpinner,
+                        badge: row.showsWaiting ? .waiting : nil
+                    ) {
+                        BotAvatarView(
+                            bot: bot, size: face,
+                            state: MausState.forChat(.bot(bot), in: session.state)
+                        )
+                    }
                     .padding(.trailing, CompactRosterMetrics.faceSpacing)
-
-                    // the spinner also stands for a thread being made
-                    let spinnerLabel: LocalizedStringKey = row.status == .working ? "Working" : "Creating…"
                     if typeSize.isAccessibilitySize {
                         // One line cannot hold a name and a time at these
                         // sizes: the name gets the whole width, whole words
@@ -113,7 +116,7 @@ struct CompactBotEntry: View {
                             name(bot, row)
                             let line = row.secondLine(stamp: RelativeStamp.list(lastActivity), role: bot.title)
                             if !line.isEmpty {
-                                SecondLine(line: line, color: bot.color, spinnerLabel: spinnerLabel)
+                                SecondLine(line: line)
                             }
                         }
                         Spacer(minLength: 0)
@@ -121,9 +124,9 @@ struct CompactBotEntry: View {
                         nameAndRole(bot, row)
                         Spacer(minLength: 8)
                         RowStatus(
-                            waiting: row.showsWaiting, working: row.showsSpinner,
+                            waiting: false, working: false,
                             stamp: row.showsTime ? RelativeStamp.list(lastActivity) : "",
-                            color: bot.color, spinnerLabel: spinnerLabel
+                            color: bot.color
                         )
                     }
                 }
@@ -146,6 +149,7 @@ struct CompactBotEntry: View {
                 }
             }
             .accessibilityIdentifier("chat-row.\(bot.id)")
+            .accessibilityValue(row.showsWaiting ? "Waiting on you" : row.showsSpinner ? (row.status == .working ? "Working" : "Creating…") : "")
 
             if row.showsThreadControl {
                 threadControl(bot, count: row.threadCount)
@@ -199,12 +203,12 @@ struct CompactBotEntry: View {
         let listed = searching || expanded
         return Button {
             Haptics.selection()
-            withAnimation(.snappy(duration: 0.2)) { expanded.toggle() }
+            withAnimation(reduceMotion ? nil : .snappy(duration: 0.2)) { expanded.toggle() }
         } label: {
             HStack(spacing: 3) {
-                Image(systemName: "chevron.right")
+                Image(systemName: "chevron.forward")
                     .font(.caption.weight(.semibold))
-                    .rotationEffect(.degrees(listed ? 90 : 0))
+                    .rotationEffect(.degrees(listed ? (layoutDirection == .rightToLeft ? -90 : 90) : 0))
                 Text("\(count)")
                     .font(.subheadline.weight(.medium))
                     .monospacedDigit()
@@ -269,9 +273,9 @@ struct CompactBotEntry: View {
                 }
                 Text(verbatim: folder.name)
                     .lineLimit(1)
-                Image(systemName: "chevron.right")
+                Image(systemName: "chevron.forward")
                     .font(.caption2.weight(.semibold))
-                    .rotationEffect(.degrees(open ? 90 : 0))
+                    .rotationEffect(.degrees(open ? (layoutDirection == .rightToLeft ? -90 : 90) : 0))
                 Spacer(minLength: 0)
             }
             .font(.footnote.weight(.medium))
@@ -488,7 +492,7 @@ struct CompactRoomRow: View {
 
     var body: some View {
         HStack(spacing: 0) {
-            UnreadDot(visible: room.unread && !busy, color: "blue")
+            UnreadDot(visible: room.unread && !busy)
             RoomFaces(members: room.memberIds.compactMap { session.state.bot($0) }, size: face)
                 .accessibilityHidden(true)
                 .padding(.trailing, CompactRosterMetrics.faceSpacing)
@@ -538,21 +542,13 @@ private struct RowPadding: ViewModifier {
     }
 }
 
-/// Beneath a bot's name at the accessibility sizes: the hand or the spinner,
-/// then the time and the role as one quiet line that gives way at its end.
+/// Time and role beneath the name at accessibility sizes. Live status now
+/// lives on the face, so it never takes width away from either line.
 private struct SecondLine: View {
     let line: CompactSecondLine
-    let color: String
-    let spinnerLabel: LocalizedStringKey
 
     var body: some View {
         HStack(spacing: 6) {
-            if line.showsWaiting || line.showsSpinner {
-                RowStatus(
-                    waiting: line.showsWaiting, working: line.showsSpinner, stamp: "",
-                    color: color, spinnerLabel: spinnerLabel
-                )
-            }
             if !line.words.isEmpty {
                 Text(verbatim: line.text)
                     .font(CompactRosterMetrics.stackedDetail)
@@ -594,13 +590,12 @@ private struct RoomFaces: View {
 /// comfortable rows.
 private struct UnreadDot: View {
     let visible: Bool
-    let color: String
 
     var body: some View {
         ZStack {
             if visible {
                 Circle()
-                    .fill(MausPalette.color(color))
+                    .fill(RosterStyle.unread)
                     .frame(width: 8, height: 8)
                     .accessibilityLabel("Unread")
             }

@@ -160,6 +160,9 @@ struct ChatListView: View {
                 if ProcessInfo.processInfo.arguments.contains("-open-walkie") {
                     showingWalkie = true
                 }
+                if ProcessInfo.processInfo.arguments.contains("-open-updates") {
+                    showingUpdates = true
+                }
                 if ProcessInfo.processInfo.arguments.contains("-open-first"),
                    path.isEmpty, let first = chats.first {
                     path.append(first.chat)
@@ -271,6 +274,9 @@ struct ChatListView: View {
                     .lineLimit(1)
             }
             .padding(.horizontal, 104)
+            // The centred label's padded bounds cover the header; only
+            // the real controls underneath should ever receive a tap.
+            .allowsHitTesting(false)
         }
         .padding(.horizontal, 16)
         .padding(.top, 4)
@@ -311,7 +317,7 @@ struct ChatListView: View {
                     Haptics.selection()
                     openAttention(entry)
                 } label: {
-                    AttentionRow(entry: entry, followsDynamicType: density == .compact)
+                    AttentionRow(entry: entry, compact: density == .compact)
                 }
                 .buttonStyle(.plain)
                 .padding(.horizontal, 16)
@@ -454,7 +460,7 @@ struct ChatListView: View {
             sectionLabel(Text(title))
             channelTiles(rooms, showsCreate: showsCreate)
         }
-        .padding(.top, 2)
+        .padding(.top, sectionSpacing)
     }
 
     private func channelTiles(_ rooms: [Room], showsCreate: Bool) -> some View {
@@ -670,7 +676,7 @@ struct ChatListView: View {
             Haptics.selection()
             showingUpdates = true
         }
-        .frame(height: 52)
+        .frame(minHeight: 52)
     }
 
     private var searchButton: some View {
@@ -775,13 +781,7 @@ struct ChatListView: View {
 
     private func sectionLabel(_ text: Text) -> some View {
         text
-            .textCase(.uppercase)
-            // Compact rows follow Dynamic Type, so their titles do too, but
-            // only up to xxxLarge: beyond it these uppercase labels would
-            // outweigh the names they head. Comfortable's never scale.
-            .font(density == .compact ? .footnote.weight(.semibold) : .system(size: 13, weight: .semibold))
-            .dynamicTypeSize(...DynamicTypeSize.xxxLarge)
-            .tracking(0.4)
+            .font(.subheadline.weight(.semibold))
             .foregroundStyle(Color.secondary)
             .padding(.horizontal, 20)
     }
@@ -849,66 +849,64 @@ struct GroupTile: View {
 /// working, which outranks queued and unread — the same order as the tree.
 struct AttentionRow: View {
     let entry: AttentionThread
-    /// Compact's rows follow Dynamic Type, and these grow with them, in the
-    /// proportions they have at the default size. Comfortable's rows keep
-    /// fixed sizes, and so do these beside them.
-    var followsDynamicType = false
-
+    var compact = false
+    @EnvironmentObject private var session: Session
     @Environment(\.dynamicTypeSize) private var typeSize
-    @ScaledMetric(relativeTo: .subheadline) private var scaledTitle: CGFloat = 15
-    @ScaledMetric(relativeTo: .subheadline) private var scaledDetail: CGFloat = 12
-    @ScaledMetric(relativeTo: .subheadline) private var scaledMarkWidth: CGFloat = 24
-
-    /// The title's size, and the mark's beside it.
-    private var titleSize: CGFloat { followsDynamicType ? scaledTitle : 15 }
-    private var detailSize: CGFloat { followsDynamicType ? scaledDetail : 12 }
-    private var markWidth: CGFloat { followsDynamicType ? scaledMarkWidth : 24 }
-    /// A scaled title wraps at the accessibility sizes instead of being cut
-    /// short, as compact's names and thread titles do there.
-    private var titleWraps: Bool { followsDynamicType && typeSize.isAccessibilitySize }
+    @ScaledMetric(relativeTo: .body) private var compactFace: CGFloat = 32
+    @ScaledMetric(relativeTo: .body) private var comfortableFace: CGFloat = 40
 
     private var waiting: Bool { entry.task.activity == "waiting-on-you" }
-    private var working: Bool { !waiting && (entry.task.busy == true || entry.task.activity == "working") }
+    private var working: Bool { !waiting && entry.task.isWorking && !entry.task.isWaitingOnTeammate }
     private var queued: Bool { !waiting && !working && entry.task.activity == "queued" }
 
     private var statusText: String {
         if waiting { return "Waiting on you" }
+        if entry.task.isWaitingOnTeammate { return "Waiting on teammate" }
         if working { return "Working" }
         if queued { return "Queued" }
         return "Unread"
     }
 
+    private var badge: RosterFaceBadge {
+        if waiting { return .waiting }
+        if working { return .working }
+        if queued || entry.task.isWaitingOnTeammate { return .queued }
+        return .unread
+    }
+
     var body: some View {
         HStack(spacing: 12) {
-            Group {
-                if working {
-                    ProgressView().controlSize(.small)
+            let bot = session.state.bot(entry.botId)
+            let size = min(compact ? compactFace : comfortableFace, 48)
+            // The server's avatar choice belongs here too, not just in the
+            // bot's main row; identity must survive a thread asking for help.
+            RosterFace(color: bot?.color ?? "blue", size: size, badge: badge) {
+                if let bot {
+                    BotAvatarView(bot: bot, size: size, state: MausState.forChat(.bot(bot), in: session.state))
                 } else {
-                    Image(systemName: waiting ? "exclamationmark.circle.fill" : queued ? "clock" : "bell.badge.fill")
-                        .font(.system(size: titleSize, weight: .medium))
+                    MausAvatar(color: "blue", size: size)
                 }
             }
-            .foregroundStyle(waiting ? Color.orange : queued ? Color.secondary : Color.accentColor)
-            .frame(width: markWidth)
 
-            VStack(alignment: .leading, spacing: 2) {
+            VStack(alignment: .leading, spacing: 3) {
                 Text(verbatim: entry.task.displayTitle)
-                    .font(.system(size: titleSize, weight: .medium))
+                    .font(.body.weight(.semibold))
                     .foregroundStyle(Color.primary)
-                    .lineLimit(titleWraps ? 3 : 1)
-                    .fixedSize(horizontal: false, vertical: titleWraps)
+                    .lineLimit(typeSize.isAccessibilitySize ? 3 : 1)
+                    .fixedSize(horizontal: false, vertical: true)
                 Text("\(entry.botName) · \(statusText)")
-                    .font(.system(size: detailSize))
+                    .font(.caption)
                     .foregroundStyle(Color.secondary)
-                    .lineLimit(1)
+                    .lineLimit(typeSize.isAccessibilitySize ? 2 : 1)
             }
             Spacer(minLength: 0)
         }
-        .padding(.vertical, 8)
+        .padding(.vertical, compact ? 7 : 10)
         .frame(minHeight: 44)
         .contentShape(Rectangle())
         .accessibilityElement(children: .combine)
         .accessibilityLabel("\(entry.task.displayTitle), \(entry.botName), \(statusText)")
+        .accessibilityIdentifier("attention-\(entry.task.threadId)")
     }
 }
 
@@ -919,76 +917,72 @@ struct ChatRow: View {
     var state: MausState = .idle
     var waiting = false
     var last = false
+    @Environment(\.dynamicTypeSize) private var typeSize
+    @ScaledMetric(relativeTo: .body) private var scaledFace: CGFloat = 44
+
+    private var status: RosterRowStatus {
+        switch chat {
+        case let .bot(bot): bot.rosterStatus(hasPendingCard: waiting)
+        case .room: waiting ? .waitingOnYou : chat.busy ? .working : .idle
+        }
+    }
 
     var body: some View {
         HStack(alignment: .top, spacing: 0) {
-            // the unread dot, in the bot's own colour, at the very edge
             ZStack {
                 if chat.unread && !chat.busy {
                     Circle()
-                        .fill(MausPalette.color(chat.color))
-                        .frame(width: 10, height: 10)
+                        .fill(RosterStyle.unread)
+                        .frame(width: 8, height: 8)
+                        .accessibilityLabel("Unread")
                 }
             }
-            .frame(width: 22)
-            .frame(maxHeight: .infinity)
+            .frame(width: 16, height: min(scaledFace, 52))
+            .padding(.top, 14)
 
-            HStack(alignment: .top, spacing: 14) {
-                ChatAvatarView(chat: chat, size: 52, state: state, animated: state.showsActivity)
-                    .padding(.top, 12)
+            HStack(alignment: .top, spacing: 12) {
+                RosterFace(
+                    color: chat.color, size: min(scaledFace, 52),
+                    working: status == .working,
+                    badge: status == .waitingOnYou ? .waiting : nil
+                ) {
+                    ChatAvatarView(chat: chat, size: min(scaledFace, 52), state: state)
+                }
+                .padding(.top, 14)
 
                 VStack(alignment: .leading, spacing: 4) {
-                    HStack(spacing: 8) {
+                    HStack(alignment: .firstTextBaseline, spacing: 8) {
                         Text(chat.name)
-                            .font(.system(size: 17, weight: .semibold))
+                            .font(.body.weight(.semibold))
                             .foregroundStyle(Color.primary)
-                            .lineLimit(1)
+                            .lineLimit(typeSize.isAccessibilitySize ? 3 : 1)
+                            .fixedSize(horizontal: false, vertical: true)
                             .layoutPriority(1)
 
-                        // the bot's job, the way the desktop shows it
-                        if !chat.subtitle.isEmpty {
-                            Text(chat.subtitle)
-                                .font(.system(size: 13))
-                                .foregroundStyle(Color.secondary)
-                                .lineLimit(1)
-                                .padding(.horizontal, 8)
-                                .padding(.vertical, 3)
-                                .background(Capsule().fill(Color.secondary.opacity(0.15)))
+                        if case let .bot(bot) = chat, bot.chiefOfStaff == true {
+                            ChiefBadge()
                         }
-
-                        Spacer(minLength: 4)
-
-                        Text(RelativeStamp.list(at))
-                            .font(.system(size: 15))
-                            .foregroundStyle(Color.secondary)
-                            .fixedSize()
-                        Image(systemName: "chevron.right")
-                            .font(.system(size: 13, weight: .semibold))
-                            .foregroundStyle(Color.secondary.opacity(0.5))
-                    }
-
-                    HStack(alignment: .top, spacing: 8) {
-                        // one line for every bot, so the rows keep one rhythm
-                        Text(preview.isEmpty ? " " : preview)
-                            .font(.system(size: 15))
-                            .foregroundStyle(Color.secondary)
-                            .lineLimit(1)
-
                         Spacer(minLength: 0)
-
-                        if chat.busy {
-                            ProgressView().controlSize(.mini).padding(.top, 3)
+                        if !typeSize.isAccessibilitySize {
+                            stamp
                         }
                     }
 
-                    if waiting {
-                        Label("Waiting on you", systemImage: "hand.raised.fill")
-                            .font(.system(size: 12, weight: .semibold))
-                            .foregroundStyle(.white)
-                            .padding(.horizontal, 9)
-                            .padding(.vertical, 4)
-                            .background(Capsule().fill(MausPalette.color(chat.color)))
-                            .padding(.top, 4)
+                    if !chat.subtitle.isEmpty {
+                        Text(chat.subtitle)
+                            .font(.caption)
+                            .foregroundStyle(Color.secondary)
+                            .lineLimit(typeSize.isAccessibilitySize ? 2 : 1)
+                    }
+
+                    Text(preview.isEmpty ? " " : preview)
+                        .font(.subheadline)
+                        .foregroundStyle(Color.secondary)
+                        .lineLimit(typeSize.isAccessibilitySize ? 3 : 1)
+                        .multilineTextAlignment(.leading)
+
+                    if typeSize.isAccessibilitySize {
+                        stamp
                     }
                 }
                 .padding(.vertical, 12)
@@ -999,8 +993,18 @@ struct ChatRow: View {
             }
             .padding(.trailing, 16)
         }
-        .padding(.leading, 6)
+        .padding(.leading, 8)
         .contentShape(Rectangle())
+        .accessibilityElement(children: .combine)
+        .accessibilityValue(status == .waitingOnYou ? "Waiting on you" : status == .working ? "Working" : "")
+    }
+
+    private var stamp: some View {
+        Text(RelativeStamp.list(at))
+            .font(.caption)
+            .monospacedDigit()
+            .foregroundStyle(Color.secondary)
+            .fixedSize()
     }
 }
 
@@ -1009,61 +1013,70 @@ struct UpdatesPill: View {
     let updates: [ChatUpdate]
     let action: () -> Void
 
+    private var needsYou: Int { updates.filter { $0.kind == .needsYou }.count }
+    private var working: Int { updates.filter { $0.kind == .working }.count }
+
     var body: some View {
         Button(action: action) {
             HStack(spacing: 8) {
                 if !updates.isEmpty {
                     MascotStack(colors: Array(updates.prefix(3).map(\.chat.color)))
-                }
-                VStack(alignment: .leading, spacing: 1) {
-                    HStack(spacing: 4) {
-                        if let first = updates.first {
-                            switch first.kind {
-                            case .needsYou:
-                                Image(systemName: "hand.raised.fill")
-                                    .font(.system(size: 11, weight: .bold))
-                                    .foregroundStyle(MausPalette.color(first.chat.color))
-                                Text("\(first.chat.name) needs you")
-                            case .working:
-                                Text("\(first.chat.name) is working")
-                            case .toReview:
-                                Text("\(first.chat.name) has an update")
+                        .overlay(alignment: .bottomTrailing) {
+                            if needsYou > 0 {
+                                Text("\(needsYou)")
+                                    .font(.caption2.weight(.bold))
+                                    .monospacedDigit()
+                                    .foregroundStyle(Color.primary)
+                                    .padding(.horizontal, 5)
+                                    .frame(minWidth: 18, minHeight: 18)
+                                    .background(Capsule().fill(Color.orange.opacity(0.25)))
+                                    .overlay(Capsule().stroke(Color(uiColor: .systemBackground), lineWidth: 1.5))
+                                    .offset(y: 6)
+                                    .accessibilityIdentifier("updates-needs-you-count")
                             }
-                        } else {
-                            Text("All quiet")
                         }
-                    }
-                    .font(.system(size: 14, weight: .semibold))
+                }
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(updates.isEmpty ? "All quiet" : "Updates")
+                    .font(.subheadline.weight(.semibold))
                     .foregroundStyle(updates.isEmpty ? Color.secondary : Color.primary)
                     .lineLimit(1)
 
-                    Text(subline)
-                        .font(.system(size: 12))
-                        .foregroundStyle(Color.secondary)
-                        .lineLimit(1)
+                    HStack(spacing: 4) {
+                        if working > 0 {
+                            RosterWorkingArc(color: .secondary)
+                                .frame(width: 11, height: 11)
+                            Text("\(working)")
+                                .monospacedDigit()
+                                .accessibilityIdentifier("updates-working-count")
+                            Text("Working")
+                                .lineLimit(1)
+                        } else {
+                            Text(updates.isEmpty ? "Nothing needs you" : needsYou > 0 ? "Needs you" : "To review")
+                                .lineLimit(1)
+                        }
+                    }
+                    .font(.caption)
+                    .foregroundStyle(Color.secondary)
                 }
                 Spacer(minLength: 0)
                 Image(systemName: "chevron.up")
-                    .font(.system(size: 12, weight: .bold))
+                    .font(.caption2.weight(.semibold))
                     .foregroundStyle(Color.secondary)
             }
             .padding(.leading, updates.isEmpty ? 16 : 7)
             .padding(.trailing, 12)
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .padding(.vertical, 8)
+            .frame(maxWidth: .infinity)
             .contentShape(Capsule())
         }
         .buttonStyle(.plain)
         .glassCapsule()
         .accessibilityLabel("Updates")
+        .accessibilityValue(Text("Needs you") + Text(" \(needsYou), ") + Text("Working") + Text(" \(working)"))
         .accessibilityIdentifier("updates-button")
     }
 
-    private var subline: String {
-        guard let first = updates.first else { return "Nothing needs you" }
-        let rest = updates.count - 1
-        if rest == 0 { return first.line.isEmpty ? " " : first.line }
-        return rest == 1 ? "1 more update" : "\(rest) more updates"
-    }
 }
 
 /// Up to three mascots overlapping, the way a group of faces reads at a glance.
