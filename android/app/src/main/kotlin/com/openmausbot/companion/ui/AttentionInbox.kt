@@ -1,6 +1,8 @@
 package com.openmausbot.companion.ui
 
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -11,10 +13,11 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.Immutable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.unit.sp
 import androidx.compose.ui.res.stringResource
 import com.openmausbot.companion.R
 import com.openmausbot.companion.core.Bot
@@ -95,36 +98,49 @@ private fun attentionRank(entry: AttentionEntry): Int = when {
 
 /** Selection only: the row jumps; menus and management stay in the sheet. */
 @Composable
-internal fun AttentionRow(entry: AttentionEntry, onOpen: () -> Unit) {
+internal fun AttentionRow(entry: AttentionEntry, bot: Bot, compact: Boolean, onOpen: () -> Unit) {
     val status = when {
         entry.task.activity == "waiting-on-you" -> stringResource(R.string.mobile_waiting_on_you_edab5b72)
         entry.task.busy == true || entry.task.activity == "working" -> stringResource(R.string.mobile_thread_working)
         entry.queued -> stringResource(R.string.mobile_queued_6a599877)
         else -> stringResource(R.string.mobile_unread_07b032b5)
     }
+    val badge = when {
+        entry.task.activity == "waiting-on-you" -> RosterFaceBadge.WAITING
+        entry.task.busy == true || entry.task.activity == "working" -> RosterFaceBadge.WORKING
+        entry.queued -> RosterFaceBadge.QUEUED
+        else -> RosterFaceBadge.UNREAD
+    }
+    val faceSize = if (compact) 32.dp else 40.dp
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .clickable(onClick = onOpen)
-            .padding(horizontal = 20.dp, vertical = 8.dp),
+            .testTag("attention-row.${entry.id}")
+            .clickable(role = Role.Button, onClick = onOpen)
+            .heightIn(min = MIN_TOUCH_TARGET)
+            .padding(horizontal = 20.dp, vertical = if (compact) 8.dp else 12.dp),
         verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(12.dp),
     ) {
+        RosterFace(size = faceSize, color = bot.color, badge = badge) {
+            BotAvatar(bot = bot, size = faceSize, animated = false, state = when (badge) {
+                RosterFaceBadge.WAITING -> MausState.IDLE
+                RosterFaceBadge.WORKING -> MausState.WORKING
+                else -> MausState.IDLE
+            })
+        }
         Column(modifier = Modifier.weight(1f)) {
             Text(
                 text = entry.task.displayTitle,
-                fontSize = 15.sp,
-                fontWeight = if (entry.task.unread == true) FontWeight.SemiBold else FontWeight.Medium,
-                color = if (entry.task.activity == "waiting-on-you") {
-                    MaterialTheme.colorScheme.error
-                } else {
-                    MaterialTheme.colorScheme.onSurface
-                },
+                style = MaterialTheme.typography.bodyLarge,
+                fontWeight = FontWeight.SemiBold,
+                color = MaterialTheme.colorScheme.onSurface,
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
             )
             Text(
                 text = "${entry.botName} · $status",
-                fontSize = 12.sp,
+                style = MaterialTheme.typography.bodySmall,
                 color = secondaryTint,
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,

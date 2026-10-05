@@ -31,7 +31,6 @@ import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Create
-import androidx.compose.material.icons.filled.Notifications
 import androidx.compose.material.icons.filled.Person
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.DateRange
@@ -71,6 +70,9 @@ import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.heading
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.style.TextOverflow
@@ -83,6 +85,8 @@ import com.openmausbot.companion.core.Chat
 import com.openmausbot.companion.core.ChatSummary
 import com.openmausbot.companion.core.Room
 import com.openmausbot.companion.core.RosterDensity
+import com.openmausbot.companion.core.RosterRowStatus
+import com.openmausbot.companion.core.rosterStatus
 import com.openmausbot.companion.core.SearchHit
 import com.openmausbot.companion.core.Session
 import com.openmausbot.companion.core.chat
@@ -96,7 +100,7 @@ import kotlinx.coroutines.launch
  * The roster — the port of `ios/App/ChatListView.swift`.
  *
  * Messages-shaped: a header with you on the left and settings on the right, your
- * groups, every bot below with the unread dot in the bot's own colour at the left
+ * groups, every bot below with a blue unread dot at the left
  * edge, and a bar floating at the bottom. The bar's pill is Updates — only the
  * bots that need you, are working, or have something you have not read — beside
  * round search and new-bot buttons. Everything scrolls under the bar, which is
@@ -346,11 +350,11 @@ fun RosterScreen(navigator: CompanionNavigator) {
                                 SectionLabel(stringResource(R.string.mobile_roster_needs_attention), Modifier.padding(top = 2.dp, bottom = 4.dp))
                             }
                             items(attention, key = { "attention-${it.id}" }) { entry ->
-                                AttentionRow(entry = entry, onOpen = {
-                                    state.bots.firstOrNull { it.id == entry.botId }
-                                        ?.let { bot -> Chat.BotChat(bot.forTask(entry.task.threadId) ?: bot) }
-                                        ?.let(navigator::open)
-                                })
+                                state.bots.firstOrNull { it.id == entry.botId }?.let { bot ->
+                                    AttentionRow(entry = entry, bot = bot, compact = compact, onOpen = {
+                                        navigator.open(Chat.BotChat(bot.forTask(entry.task.threadId) ?: bot))
+                                    })
+                                }
                             }
                         }
                         state.unsectionedChief?.let { chief ->
@@ -635,7 +639,7 @@ private fun RosterHeader(name: String?, status: Session.Status, onSettings: () -
         horizontalArrangement = Arrangement.spacedBy(8.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        TouchTarget(onClick = onSettings, size = 44.dp, contentDescription = stringResource(R.string.mobile_settings_c7f73bb5)) {
+        TouchTarget(onClick = onSettings, contentDescription = stringResource(R.string.mobile_settings_c7f73bb5)) {
             Box(
                 modifier = Modifier
                     .size(44.dp)
@@ -651,10 +655,10 @@ private fun RosterHeader(name: String?, status: Session.Status, onSettings: () -
             horizontalAlignment = Alignment.CenterHorizontally,
             verticalArrangement = Arrangement.spacedBy(2.dp),
         ) {
-            Text(stringResource(R.string.mobile_threads_bb12e8aa), fontSize = 17.sp, fontWeight = FontWeight.SemiBold)
+            Text(stringResource(R.string.mobile_threads_bb12e8aa), style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
             Text(
                 text = localizedRosterHeaderSubtitle(name, status),
-                fontSize = 13.sp,
+                style = MaterialTheme.typography.bodySmall,
                 color = secondaryTint,
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
@@ -707,12 +711,11 @@ private fun CompactGroupsTitle(title: String, onCreate: (() -> Unit)?, spacing: 
 @Composable
 private fun SectionLabel(text: String, modifier: Modifier = Modifier) {
     Text(
-        text = RosterLayout.sectionLabel(text),
-        fontSize = 13.sp,
+        text = text,
+        style = MaterialTheme.typography.titleSmall,
         fontWeight = FontWeight.SemiBold,
-        letterSpacing = 0.4.sp,
-        color = secondaryTint,
-        modifier = modifier.padding(horizontal = 20.dp),
+        color = MaterialTheme.colorScheme.onSurfaceVariant,
+        modifier = modifier.padding(horizontal = 20.dp).semantics { heading() },
     )
 }
 
@@ -866,149 +869,95 @@ private fun ChatRow(
 ) {
     val chat = summary.chat
     val now = remember(summary.lastActivity) { System.currentTimeMillis() }
-    val accent = remember(chat.color) { Color(MausPalette.argb(chat.color)) }
+    val unreadLabel = stringResource(R.string.mobile_unread_07b032b5)
+    val runtime = when (chat) {
+        is Chat.BotChat -> chat.bot.rosterStatus(hasPendingCard = waiting)
+        is Chat.RoomChat -> when {
+            waiting -> RosterRowStatus.WAITING_ON_YOU
+            chat.busy -> RosterRowStatus.WORKING
+            else -> RosterRowStatus.IDLE
+        }
+    }
     Row(
         modifier = Modifier
             .fillMaxWidth()
             .testTag("chat-row.${summary.id}")
             .clickable(role = Role.Button, onClick = onClick)
-            .padding(start = 6.dp),
+            .padding(start = 4.dp, end = 16.dp),
         verticalAlignment = Alignment.Top,
     ) {
-        // The unread dot, in the bot's own colour, at the very edge.
         Box(
-            modifier = Modifier
-                .width(22.dp)
-                .align(Alignment.CenterVertically),
+            modifier = Modifier.width(16.dp).padding(top = 30.dp),
             contentAlignment = Alignment.Center,
         ) {
             if (chat.unread && !chat.busy) {
-                Box(Modifier.size(10.dp).background(accent, CircleShape))
+                Box(
+                    Modifier.size(8.dp).background(rosterUnreadBlue, CircleShape)
+                        .semantics { contentDescription = unreadLabel },
+                )
             }
         }
-
-        Row(
-            modifier = Modifier
-                .weight(1f)
-                .padding(end = 16.dp),
-            horizontalArrangement = Arrangement.spacedBy(14.dp),
-            verticalAlignment = Alignment.Top,
+        RosterFace(
+            size = 44.dp,
+            color = chat.color,
+            working = runtime == RosterRowStatus.WORKING,
+            badge = if (runtime == RosterRowStatus.WAITING_ON_YOU) RosterFaceBadge.WAITING else null,
+            modifier = Modifier.padding(top = 12.dp).testTag("roster-face.${summary.id}"),
         ) {
-            ChatAvatar(
-                chat = chat,
-                size = 52.dp,
-                state = face,
-                modifier = Modifier.padding(top = 12.dp),
-            )
-
-            Box(modifier = Modifier.weight(1f)) {
-                Column(
-                    modifier = Modifier.padding(vertical = 12.dp),
-                    verticalArrangement = Arrangement.spacedBy(4.dp),
+            ChatAvatar(chat = chat, size = 44.dp, state = face, animated = false)
+        }
+        Spacer(Modifier.width(12.dp))
+        Box(Modifier.weight(1f)) {
+            Column(
+                modifier = Modifier.padding(vertical = 12.dp),
+                verticalArrangement = Arrangement.spacedBy(4.dp),
+            ) {
+                Row(
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    verticalAlignment = Alignment.CenterVertically,
                 ) {
-                    Row(
-                        horizontalArrangement = Arrangement.spacedBy(8.dp),
-                        verticalAlignment = Alignment.CenterVertically,
-                    ) {
-                        Row(
-                            modifier = Modifier.weight(1f),
-                            horizontalArrangement = Arrangement.spacedBy(8.dp),
-                            verticalAlignment = Alignment.CenterVertically,
-                        ) {
-                            Text(
-                                text = chat.name,
-                                fontSize = 17.sp,
-                                fontWeight = FontWeight.SemiBold,
-                                maxLines = 1,
-                                overflow = TextOverflow.Ellipsis,
-                                modifier = Modifier.weight(1f, fill = false),
-                            )
-                            // The bot's job, the way the desktop shows it.
-                            if (chat.subtitle.isNotEmpty()) {
-                                Text(
-                                    text = chat.subtitle,
-                                    fontSize = 13.sp,
-                                    color = secondaryTint,
-                                    maxLines = 1,
-                                    overflow = TextOverflow.Ellipsis,
-                                    modifier = Modifier
-                                        .weight(1f, fill = false)
-                                        .background(
-                                            secondaryTint.copy(alpha = 0.15f),
-                                            CircleShape,
-                                        )
-                                        .padding(horizontal = 8.dp, vertical = 3.dp),
-                                )
-                            }
-                        }
-                        Text(
-                            text = RelativeStamp.list(
-                                summary.lastActivity,
-                                now,
-                                locale = Locale.getDefault(),
-                            ),
-                            fontSize = 15.sp,
-                            color = secondaryTint,
-                            maxLines = 1,
-                        )
-                        Icon(
-                            imageVector = Icons.AutoMirrored.Filled.KeyboardArrowRight,
-                            contentDescription = null,
-                            tint = secondaryTint.copy(alpha = 0.5f),
-                            modifier = Modifier.size(16.dp),
-                        )
-                    }
-
-                    Row(
-                        horizontalArrangement = Arrangement.spacedBy(8.dp),
-                        verticalAlignment = Alignment.Top,
-                    ) {
-                        // One line for every bot, so the rows keep one rhythm.
-                        Text(
-                            text = summary.preview.ifEmpty { " " },
-                            fontSize = 15.sp,
-                            color = secondaryTint,
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis,
-                            modifier = Modifier.weight(1f),
-                        )
-                        if (chat.busy) {
-                            CircularProgressIndicator(
-                                modifier = Modifier
-                                    .padding(top = 3.dp)
-                                    .size(12.dp),
-                                strokeWidth = 2.dp,
-                            )
-                        }
-                    }
-
-                    if (waiting) {
-                        Row(
-                            modifier = Modifier
-                                .padding(top = 4.dp)
-                                .background(accent, CircleShape)
-                                .padding(horizontal = 9.dp, vertical = 4.dp),
-                            horizontalArrangement = Arrangement.spacedBy(4.dp),
-                            verticalAlignment = Alignment.CenterVertically,
-                        ) {
-                            Icon(
-                                imageVector = Icons.Filled.Notifications,
-                                contentDescription = null,
-                                tint = Color.White,
-                                modifier = Modifier.size(12.dp),
-                            )
-                            Text(
-                                text = stringResource(R.string.mobile_waiting_on_you_edab5b72),
-                                fontSize = 12.sp,
-                                fontWeight = FontWeight.SemiBold,
-                                color = Color.White,
-                            )
-                        }
-                    }
+                    Text(
+                        text = chat.name,
+                        style = MaterialTheme.typography.bodyLarge,
+                        fontWeight = FontWeight.SemiBold,
+                        maxLines = if (LocalDensity.current.fontScale >= 1.5f) 3 else 1,
+                        overflow = TextOverflow.Ellipsis,
+                        modifier = Modifier.weight(1f),
+                    )
+                    Text(
+                        text = RelativeStamp.list(summary.lastActivity, now, locale = Locale.getDefault()),
+                        style = MaterialTheme.typography.labelSmall.copy(fontFeatureSettings = "tnum"),
+                        color = secondaryTint,
+                        maxLines = 1,
+                    )
+                    Icon(
+                        imageVector = Icons.AutoMirrored.Filled.KeyboardArrowRight,
+                        contentDescription = null,
+                        tint = secondaryTint,
+                        modifier = Modifier.size(16.dp),
+                    )
                 }
-
-                if (!last) HorizontalDivider(modifier = Modifier.align(Alignment.BottomStart))
+                if (chat.subtitle.isNotEmpty()) {
+                    Text(
+                        text = chat.subtitle,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = secondaryTint,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                }
+                Text(
+                    text = summary.preview.ifEmpty { " " },
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = secondaryTint,
+                    maxLines = 2,
+                    overflow = TextOverflow.Ellipsis,
+                )
             }
+            if (!last) HorizontalDivider(
+                modifier = Modifier.align(Alignment.BottomStart),
+                color = MaterialTheme.colorScheme.outlineVariant,
+            )
         }
     }
 }
