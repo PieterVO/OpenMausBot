@@ -71,7 +71,9 @@ Bot rows use 32pt/44pt faces: the bot's colour carries a slow working arc, and
 waiting attaches a hand badge. Unread dots use the shared deep blue `#2E6FDB`,
 not the bot's colour. A teammate wait stays a quiet clock, never a spinner.
 Reduce Motion replaces each rotating arc with a static ring; inactive scenes
-pause it. Section headers retain their localized copy in sentence case.
+pause it. Section headers retain their localized copy in sentence case. Folder
+disclosures use native SF folder symbols rather than emoji icons, keep their
+names and grouping, and retain minimum 44pt targets in both densities.
 
 Comfortable still shows the last-message preview and relative time, with
 larger text wrapping rather than a fixed-size row. The Updates pill keeps
@@ -172,3 +174,28 @@ the fixture app before checking the bot row again.
 | Reopening Pepper before the fix | Reopening Pepper after choosing iCloud |
 | --- | --- |
 | ![Gmail reopened](assets/mobile-thread-selection/before.png) | ![iCloud restored](assets/mobile-thread-selection/after.png) |
+
+## Home and Updates redesign — 2026-10-06 local
+
+- Debug simulator build succeeded with the iOS 27 SDK.
+- All 888 CompanionCore tests passed.
+- All 9 `RosterDensityUITests` passed on the isolated iPhone 17 Pro Max:
+  `/tmp/omb-ioshome-folder-light.xcresult`. This includes both densities,
+  XXL/RTL disclosure and Updates reachability, exact thread destinations,
+  and an inline approval that stays in the sheet.
+- All 12 `ThreadNavigationUITests` and all 3 `SwipeBackUITests` passed in the
+  preceding combined run, `/tmp/omb-ioshome-green.xcresult`. That run exposed
+  a 42.4pt measured approval target under the native inset sheet; the 48pt
+  layout fix is covered by the later passing roster suite.
+- The final compact and comfortable folder-disclosure checks passed in light
+  and dark after the SF-symbol cutover and shared unread-colour update:
+  `/tmp/omb-ioshome-folder-light.xcresult` (10 tests, no failures) and
+  `/tmp/omb-ioshome-folder-dark.xcresult` (2 tests, no failures). Their retained
+  attachments include the expanded folders and exact thread destinations.
+- Native light/dark, compact/comfortable, approval, and XXL/RTL screenshots
+  were captured and opened on iPhone and iPad Pro 13-inch (M5). Evidence is
+  retained in the implementing worktree's `.impeccable/review/ios-home/`.
+  The temporary tablet simulator was removed after capture.
+- Only offline DEBUG fixtures were used. No physical-device pairing, live
+  provider traffic, dictation, uploads, or hardware VoiceOver verification
+  was performed.

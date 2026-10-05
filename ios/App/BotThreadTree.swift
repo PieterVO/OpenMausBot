@@ -84,13 +84,13 @@ struct BotThreadTree: View {
                                 threadLinks(group.tasks, bot: bot).padding(.leading, 8)
                             } label: {
                                 HStack(spacing: 6) {
-                                    if let emoji = folder.emoji, !emoji.isEmpty { Text(emoji) }
-                                    else { Image(systemName: "folder") }
+                                    Image(systemName: "folder")
+                                        .accessibilityHidden(true)
                                     Text(folder.name).lineLimit(1)
                                 }
                                 .font(.footnote.weight(.medium))
                                 .foregroundStyle(.secondary)
-                                .frame(minHeight: 40)
+                                .frame(minHeight: 44)
                             }
                         } else {
                             threadLinks(group.tasks, bot: bot)

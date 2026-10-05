@@ -43,7 +43,7 @@ struct BotThreadRow: View {
                         }
                         if task.unread == true {
                             Label("Unread", systemImage: "circle.fill")
-                                .foregroundStyle(Color.accentColor)
+                                .foregroundStyle(RosterStyle.unread)
                         }
                     }
                     .font(.caption.weight(.medium))

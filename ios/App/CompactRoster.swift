@@ -266,11 +266,8 @@ struct CompactBotEntry: View {
             if collapsedFolders.contains(key) { collapsedFolders.remove(key) } else { collapsedFolders.insert(key) }
         } label: {
             HStack(spacing: 6) {
-                if let emoji = folder.emoji, !emoji.isEmpty {
-                    Text(verbatim: emoji)
-                } else {
-                    Image(systemName: "folder")
-                }
+                Image(systemName: "folder")
+                    .accessibilityHidden(true)
                 Text(verbatim: folder.name)
                     .lineLimit(1)
                 Image(systemName: "chevron.forward")
@@ -439,7 +436,7 @@ struct CompactThreadLine: View {
         HStack(spacing: 6) {
             if task.unread == true {
                 Circle()
-                    .fill(Color.accentColor)
+                    .fill(RosterStyle.unread)
                     .frame(width: 7, height: 7)
             }
             switch mark {
