@@ -31,7 +31,7 @@ struct UpdatesSheet: View {
                     Spacer()
                     Button("Done") { dismiss() }
                         .font(.body.weight(.semibold))
-                        .frame(minWidth: 44, minHeight: 44)
+                        .frame(minWidth: 48, minHeight: 48)
                 }
                 .padding(.horizontal, 20)
                 .padding(.top, 22)
@@ -152,7 +152,7 @@ private struct UpdateRow: View {
                     Button(action: open) {
                         Label("Open the chat to review SKILL.md", systemImage: "doc.text.magnifyingglass")
                             .font(.footnote.weight(.medium))
-                            .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
+                            .frame(maxWidth: .infinity, minHeight: 48, alignment: .leading)
                     }
                     .buttonStyle(.plain)
                     .foregroundStyle(Color.secondary)
@@ -178,7 +178,7 @@ private struct UpdateRow: View {
                                     .foregroundStyle(CardStyle.isRefusal(option) ? Color.primary : .white)
                                     .padding(.horizontal, 14)
                                     .padding(.vertical, 10)
-                                    .frame(maxWidth: .infinity, minHeight: 44)
+                                    .frame(maxWidth: .infinity, minHeight: 48)
                                     .background(
                                         Capsule().fill(
                                             CardStyle.isRefusal(option)

@@ -243,10 +243,12 @@ final class RosterDensityUITests: XCTestCase {
         app.terminate()
         app.launchArguments = Self.baseArguments.filter { $0 != "-roster-preview" } + ["-open-updates"]
         app.launch()
-        let allow = app.buttons["Allow"]
+        let sheet = app.scrollViews["updates-sheet"]
+        XCTAssertTrue(sheet.waitForExistence(timeout: 10))
+        let allow = sheet.buttons["Allow"]
         XCTAssertTrue(allow.waitForExistence(timeout: 10))
         XCTAssertGreaterThanOrEqual(allow.frame.height, 44)
-        XCTAssertGreaterThanOrEqual(app.buttons["Deny"].frame.height, 44)
+        XCTAssertGreaterThanOrEqual(sheet.buttons["Deny"].frame.height, 44)
         allow.tap()
         // The fixture has no client, so this action stays isolated. It must
         // not accidentally tap the separate open-chat button.

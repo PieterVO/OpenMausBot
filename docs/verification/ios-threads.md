@@ -78,9 +78,10 @@ larger text wrapping rather than a fixed-size row. The Updates pill keeps
 stacked faces, an orange needs-you count, and a subtle working spinner/count.
 Updates uses the same face/status language and 20pt rounded cards; queued sends
 and teammate waits carry a clock instead of a working arc. Inline
-answer buttons remain separate from the open-chat button and have 44pt minimum
-targets; skill approvals still open the chat for review. The sheet's Done
-button supplements native swipe-to-dismiss.
+answer buttons remain separate from the open-chat button. Sheet controls use
+48pt layout targets so the native inset presentation keeps their measured
+targets above 44pt; skill approvals still open the chat for review. The sheet's
+Done button supplements native swipe-to-dismiss.
 
 `RosterDensityUITests` additionally checks attention labels, sentence-case
 headers, Updates counts and statuses, navigation from Updates to the exact

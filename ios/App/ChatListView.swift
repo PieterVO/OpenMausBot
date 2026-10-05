@@ -634,7 +634,7 @@ struct ChatListView: View {
     private var expandedBottomActions: some View {
         HStack(spacing: 8) {
             updatesButton
-                .frame(width: 180)
+                .frame(minWidth: 180)
             searchButton
             walkieButton
             if session.canAdminister {
