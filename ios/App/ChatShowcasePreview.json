@@ -1,0 +1,434 @@
+{
+  "bots": [
+    {
+      "id": "preview-pepper",
+      "threadId": "preview-gmail",
+      "name": "Pepper",
+      "title": "Personal assistant",
+      "description": "Makes everyday plans feel a little lighter.",
+      "notifications": false,
+      "color": "purple",
+      "unread": false,
+      "busy": false,
+      "modelSelection": {
+        "instanceId": "preview",
+        "model": "Claude Sonnet 4.6"
+      },
+      "createdAt": 1791276060000,
+      "tasks": [
+        {
+          "threadId": "preview-gmail",
+          "title": "A slow Saturday",
+          "createdAt": 1791276060000,
+          "busy": false,
+          "activity": "waiting-on-you",
+          "modelSelection": {
+            "instanceId": "preview",
+            "model": "Claude Sonnet 4.6"
+          }
+        }
+      ],
+      "activeLeafId": "showcase-approval",
+      "messages": [
+        {
+          "id": "showcase-ask",
+          "role": "user",
+          "kind": "text",
+          "at": 1791276060000,
+          "text": "Can you plan a slow Saturday for us? A little fresh air, somewhere lovely for lunch, and no rushing."
+        },
+        {
+          "id": "showcase-narration",
+          "role": "bot",
+          "kind": "text",
+          "at": 1791276064000,
+          "text": "Absolutely. I’ll find something that feels like a proper day off.",
+          "turnId": "showcase-turn",
+          "parentId": "showcase-ask"
+        },
+        {
+          "id": "showcase-plan-first",
+          "role": "bot",
+          "kind": "activity",
+          "at": 1791276068000,
+          "turnId": "showcase-turn",
+          "tool": {
+            "name": "TodoWrite",
+            "ok": true,
+            "summary": "A Saturday with room to breathe",
+            "input": "{\"todos\":[{\"content\":\"Read the weekend brief\",\"activeForm\":\"Reading the weekend brief\",\"status\":\"pending\"},{\"content\":\"Find a quiet place for lunch\",\"activeForm\":\"Finding a quiet lunch spot\",\"status\":\"pending\"},{\"content\":\"Make the reservation\",\"activeForm\":\"Making the reservation\",\"status\":\"pending\"},{\"content\":\"Save the route and timings\",\"activeForm\":\"Saving the route and timings\",\"status\":\"pending\"}]}"
+          },
+          "parentId": "showcase-narration"
+        },
+        {
+          "id": "showcase-read",
+          "role": "bot",
+          "kind": "activity",
+          "at": 1791276072000,
+          "turnId": "showcase-turn",
+          "tool": {
+            "name": "read",
+            "ok": true,
+            "summary": "weekend/preferences.md"
+          },
+          "parentId": "showcase-plan-first"
+        },
+        {
+          "id": "showcase-shell",
+          "role": "bot",
+          "kind": "activity",
+          "at": 1791276076000,
+          "turnId": "showcase-turn",
+          "tool": {
+            "name": "shell",
+            "ok": true,
+            "summary": "check opening-times --date saturday"
+          },
+          "parentId": "showcase-read"
+        },
+        {
+          "id": "showcase-search",
+          "role": "bot",
+          "kind": "activity",
+          "at": 1791276080000,
+          "turnId": "showcase-turn",
+          "tool": {
+            "name": "web_search",
+            "ok": true,
+            "summary": "Quiet riverside cafés near the park"
+          },
+          "parentId": "showcase-shell"
+        },
+        {
+          "id": "showcase-plan-active",
+          "role": "bot",
+          "kind": "activity",
+          "at": 1791276084000,
+          "turnId": "showcase-turn",
+          "tool": {
+            "name": "TodoWrite",
+            "ok": true,
+            "summary": "Checking lunch spots",
+            "input": "{\"todos\":[{\"content\":\"Read the weekend brief\",\"activeForm\":\"Reading the weekend brief\",\"status\":\"completed\"},{\"content\":\"Find a quiet place for lunch\",\"activeForm\":\"Finding a quiet lunch spot\",\"status\":\"in_progress\"},{\"content\":\"Make the reservation\",\"activeForm\":\"Making the reservation\",\"status\":\"pending\"},{\"content\":\"Save the route and timings\",\"activeForm\":\"Saving the route and timings\",\"status\":\"pending\"}]}"
+          },
+          "parentId": "showcase-search"
+        },
+        {
+          "id": "showcase-edit",
+          "role": "bot",
+          "kind": "activity",
+          "at": 1791276088000,
+          "turnId": "showcase-turn",
+          "tool": {
+            "name": "edit",
+            "ok": true,
+            "summary": "Saved Saturday’s route to plans/weekend.md"
+          },
+          "parentId": "showcase-plan-active"
+        },
+        {
+          "id": "showcase-failed",
+          "role": "bot",
+          "kind": "activity",
+          "at": 1791276092000,
+          "turnId": "showcase-turn",
+          "tool": {
+            "name": "web_fetch",
+            "ok": false,
+            "summary": "The café reservation page timed out"
+          },
+          "parentId": "showcase-edit"
+        },
+        {
+          "id": "showcase-plan-done",
+          "role": "bot",
+          "kind": "activity",
+          "at": 1791276096000,
+          "turnId": "showcase-turn",
+          "tool": {
+            "name": "TodoWrite",
+            "ok": true,
+            "summary": "The plan is ready",
+            "input": "{\"todos\":[{\"content\":\"Read the weekend brief\",\"activeForm\":\"Reading the weekend brief\",\"status\":\"completed\"},{\"content\":\"Find a quiet place for lunch\",\"activeForm\":\"Finding a quiet lunch spot\",\"status\":\"completed\"},{\"content\":\"Make the reservation\",\"activeForm\":\"Making the reservation\",\"status\":\"completed\"},{\"content\":\"Save the route and timings\",\"activeForm\":\"Saving the route and timings\",\"status\":\"completed\"}]}"
+          },
+          "parentId": "showcase-failed"
+        },
+        {
+          "id": "showcase-reply",
+          "role": "bot",
+          "kind": "text",
+          "at": 1791276100000,
+          "text": "## A Saturday, unhurried\nStart with a walk beside the river, then lunch at **Willow Café**. I found a sheltered path and left plenty of breathing room.\n\n- Take the riverside loop, not the busy road.\n- Bring a light jacket; the morning could be cool.\n\n### Before you go\n- [x] Check the café’s opening hours\n- [x] Save the walking route\n- [ ] Confirm the table by phone\n\nThe reservation page timed out, so the table is **not booked yet**. Their number is in `plans/weekend.md`.\n\n> Nothing here needs an early alarm.\n\n```text\n10:30  Riverside walk\n12:00  Lunch at Willow Café\n14:00  Take the scenic way home\n```\n\n| Stop | Time | Budget |\n| :--- | :---: | ---: |\n| Riverside loop | 10:30 | Free |\n| Willow Café | 12:00 | £28 |\n| Bookshop | 13:15 | £12 |\n\nYou can swap the bookshop for a little longer by the water.",
+          "turnId": "showcase-turn",
+          "turnTerminal": true,
+          "turnSucceeded": false,
+          "parentId": "showcase-plan-done"
+        },
+        {
+          "id": "showcase-digest-problem",
+          "role": "bot",
+          "kind": "digest",
+          "at": 1791276104000,
+          "text": "[digest] · tools: TodoWrite ×3, read ×1, shell ×1, web_search ×1, edit ×1, web_fetch ×1 (1 failed) · files: changed plans/weekend.md; added routes/riverside.txt · memory: updated MEMORY.md · reply: A Saturday, unhurried.",
+          "turnId": "showcase-turn",
+          "turnSucceeded": false,
+          "digest": {
+            "botId": "preview-pepper",
+            "threadId": "preview-gmail",
+            "at": 1791276104000,
+            "durationMs": 72000,
+            "toolCalls": 8,
+            "tools": [
+              {
+                "name": "TodoWrite",
+                "count": 3,
+                "failed": 0,
+                "sample": "Weekend plan updated"
+              },
+              {
+                "name": "read",
+                "count": 1,
+                "failed": 0,
+                "sample": "weekend/preferences.md"
+              },
+              {
+                "name": "shell",
+                "count": 1,
+                "failed": 0,
+                "sample": "Checked opening times"
+              },
+              {
+                "name": "web_search",
+                "count": 1,
+                "failed": 0,
+                "sample": "Quiet riverside cafés"
+              },
+              {
+                "name": "edit",
+                "count": 1,
+                "failed": 0,
+                "sample": "Saved the walking route"
+              },
+              {
+                "name": "web_fetch",
+                "count": 1,
+                "failed": 1,
+                "sample": "Reservation page timed out"
+              }
+            ],
+            "files": {
+              "changed": [
+                "plans/weekend.md"
+              ],
+              "added": [
+                "routes/riverside.txt"
+              ],
+              "deleted": [],
+              "truncated": 0
+            },
+            "memory": [
+              {
+                "path": "MEMORY.md",
+                "kind": "updated"
+              }
+            ],
+            "reply": "A Saturday, unhurried.",
+            "usage": {
+              "input": 10320,
+              "output": 1980,
+              "cachedInput": 2100,
+              "costUsd": 0.04
+            },
+            "hookCoverage": "full",
+            "turnId": "showcase-turn"
+          },
+          "parentId": "showcase-reply"
+        },
+        {
+          "id": "showcase-followup",
+          "role": "user",
+          "kind": "text",
+          "at": 1791276108000,
+          "text": "That sounds like us. Please save it for next weekend too.",
+          "parentId": "showcase-digest-problem"
+        },
+        {
+          "id": "showcase-followup-reply",
+          "role": "bot",
+          "kind": "text",
+          "at": 1791276112000,
+          "text": "Saved. I’ll keep the same gentle pace next weekend, too.",
+          "turnId": "showcase-save-turn",
+          "turnTerminal": true,
+          "turnSucceeded": true,
+          "parentId": "showcase-followup"
+        },
+        {
+          "id": "showcase-digest-success",
+          "role": "bot",
+          "kind": "digest",
+          "at": 1791276116000,
+          "text": "[digest] · tools: edit ×2 · files: changed plans/next-weekend.md · reply: Saved.",
+          "turnId": "showcase-save-turn",
+          "turnSucceeded": true,
+          "digest": {
+            "botId": "preview-pepper",
+            "threadId": "preview-gmail",
+            "at": 1791276104000,
+            "durationMs": 40000,
+            "toolCalls": 2,
+            "tools": [
+              {
+                "name": "edit",
+                "count": 2,
+                "failed": 0,
+                "sample": "Saved next weekend’s plan"
+              }
+            ],
+            "files": {
+              "changed": [
+                "plans/next-weekend.md"
+              ],
+              "added": [],
+              "deleted": []
+            },
+            "memory": [],
+            "reply": "Saved.",
+            "usage": {
+              "input": 1300,
+              "output": 420,
+              "costUsd": 0.01
+            },
+            "hookCoverage": "full",
+            "turnId": "showcase-save-turn"
+          },
+          "parentId": "showcase-followup-reply"
+        },
+        {
+          "id": "showcase-webhook",
+          "role": "user",
+          "kind": "text",
+          "at": 1791276120000,
+          "text": "[AUTHENTICATED WEBHOOK TASK]\nCheck Saturday’s weather forecast.\n[/AUTHENTICATED WEBHOOK TASK]\n\n[UNTRUSTED WEBHOOK EVENT DATA]\nDelivery ID: saturday-weather\nEvent: forecast.updated\n\n{\"forecast\":\"light cloud\",\"temperature\":16}\n[/UNTRUSTED WEBHOOK EVENT DATA]",
+          "parentId": "showcase-digest-success"
+        },
+        {
+          "id": "showcase-notice",
+          "role": "bot",
+          "kind": "activity",
+          "at": 1791276124000,
+          "tool": {
+            "name": "notice: The forecast is ready for Saturday.",
+            "ok": true
+          },
+          "parentId": "showcase-webhook"
+        },
+        {
+          "id": "showcase-compaction",
+          "role": "bot",
+          "kind": "compaction",
+          "at": 1791276128000,
+          "compaction": {
+            "summary": "The weekend plan, route and café details have been preserved for the next turn.",
+            "tokensBefore": 12000
+          },
+          "parentId": "showcase-notice"
+        },
+        {
+          "id": "showcase-approval",
+          "role": "bot",
+          "kind": "options",
+          "at": 1791276132000,
+          "card": {
+            "title": "Book a table at Willow Café?",
+            "subtitle": "A table for two on Saturday at noon. The café asks for your name and phone number.",
+            "options": [
+              "Allow",
+              "Deny"
+            ],
+            "requestId": "showcase-reservation",
+            "allowKey": "willow.reserve"
+          },
+          "parentId": "showcase-compaction"
+        },
+        {
+          "id": "showcase-component-question",
+          "parentId": "showcase-ask",
+          "role": "bot",
+          "kind": "options",
+          "at": 1791276062000,
+          "card": {
+            "title": "A little preference before I book",
+            "subtitle": "Let's make lunch feel like you.",
+            "options": [],
+            "requestId": "showcase-seat",
+            "questionRequest": {
+              "version": 1,
+              "questions": [{
+                "question": "Where would you like to sit?",
+                "header": "Lunch",
+                "options": [
+                  {"label": "Window seat", "description": "A little sunlight with lunch."},
+                  {"label": "Somewhere quiet", "description": "Away from the busy part of the café."}
+                ]
+              }]
+            }
+          }
+        },
+        {
+          "id": "showcase-component-credential",
+          "parentId": "showcase-ask",
+          "role": "bot",
+          "kind": "secret",
+          "at": 1791276062000,
+          "secret": {
+            "target": "weekend-calendar",
+            "label": "Calendar API key",
+            "description": "Pepper needs this to save your Saturday plan. The key never becomes a chat message.",
+            "placeholder": "Paste the key",
+            "requestKey": "showcase-calendar-key"
+          }
+        },
+        {
+          "id": "showcase-component-routine",
+          "parentId": "showcase-ask",
+          "role": "bot",
+          "kind": "routine.run",
+          "at": 1791276062000,
+          "routineRun": {
+            "runId": "showcase-weekend-check",
+            "routineId": "showcase-saturday",
+            "routineName": "Saturday check-in",
+            "status": "completed",
+            "scheduledFor": 1791276060000,
+            "executionThreadId": "preview-gmail",
+            "summary": "The morning looks clear and cool. Willow Café opens at noon, and the riverside path is open.\n\nI checked the route, saved the café's phone number, and added a rain-friendly bookshop stop. There is nothing urgent to do: just bring a light jacket and call the café when you're ready.\n\nYour plan is saved in plans/weekend.md, with the walking route and all the little details together."
+          }
+        },
+        {
+          "id": "showcase-component-diff",
+          "parentId": "showcase-ask",
+          "role": "bot",
+          "kind": "text",
+          "at": 1791276062000,
+          "text": "diff --git a/weekend.md b/weekend.md\n--- a/weekend.md\n+++ b/weekend.md\n@@ -1,2 +1,3 @@\n # A slow Saturday\n- Lunch at 11:30\n+ Lunch at 12:00\n+ A bookshop if it rains",
+          "turnTerminal": true
+        },
+        {
+          "id": "showcase-component-report",
+          "parentId": "showcase-ask",
+          "role": "bot",
+          "kind": "activity",
+          "at": 1791276062000,
+          "tool": {
+            "name": "Teammate report from Quill",
+            "ok": true,
+            "output": "I found a peaceful riverside route with benches along the way. The bookshop is a five-minute walk from Willow Café, so you can duck inside if the weather changes.\n\nI saved the route and opening hours for Pepper."
+          },
+          "threadRef": {"botId": "preview-pepper", "threadId": "preview-gmail", "title": "A slow Saturday"}
+        }
+      ]
+    }
+  ],
+  "groups": []
+}

@@ -208,4 +208,21 @@ final class UpdatesTests: XCTestCase {
             "/bin/zsh -lc \"kubectl rollout status deploy/web\""
         )
     }
+
+    func testPlanActivitiesKeepExistingBusyAndReviewUpdateSemantics() throws {
+        var state = try hydrated
+        var plan = Message(id: "plan", role: .bot, kind: .activity, at: 9)
+        plan.tool = ToolActivity(name: "TodoWrite", input: #"{"todos":[{"content":"Read","status":"in_progress"}]}"#)
+        state.messages["t-busy"] = [plan]
+        XCTAssertEqual(state.updates(detail: .full).first { $0.chat.threadId == "t-busy" }?.line, "TodoWrite")
+        XCTAssertEqual(state.updates(detail: .reduced).first { $0.chat.threadId == "t-busy" }?.line, "TodoWrite")
+        XCTAssertEqual(state.updates(detail: .hidden).first { $0.chat.threadId == "t-busy" }?.line, "Working…")
+        let index = try XCTUnwrap(state.bots.firstIndex { $0.id == "bot-idle" })
+        state.bots[index].tasks?[0].unread = true
+        var answer = Message(id: "answer", role: .bot, kind: .text, at: 1)
+        answer.text = "A reply"
+        state.messages["t-idle"] = [answer, plan]
+        XCTAssertEqual(state.updates(detail: .full).first { $0.chat.threadId == "t-idle" }?.line, "TodoWrite")
+        XCTAssertEqual(state.updates(detail: .hidden).first { $0.chat.threadId == "t-idle" }?.line, "A reply")
+    }
 }
