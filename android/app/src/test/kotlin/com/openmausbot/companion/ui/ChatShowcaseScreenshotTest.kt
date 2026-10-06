@@ -43,6 +43,9 @@ class ChatShowcaseScreenshotTest {
     private lateinit var server: MockWebServer
     private lateinit var scene: WiringScene
     private val updates = MutableSharedFlow<StreamFrame>(extraBufferCapacity = 8)
+    private val capturePattern = System.getenv("COMPANION_CAPTURE_COMPONENT")?.let {
+        Regex("^showcase-${Regex.escape(it)}-(light|dark|large-type-rtl)$")
+    }
     private val previewPng by lazy {
         val bitmap = Bitmap.createBitmap(640, 400, Bitmap.Config.ARGB_8888)
         val canvas = android.graphics.Canvas(bitmap)
@@ -322,6 +325,7 @@ class ChatShowcaseScreenshotTest {
     private fun capture(name: String) {
         compose.onAllNodesWithContentDescription(compose.activity.getString(R.string.mobile_previous_version_989537a3)).assertCountEquals(0)
         compose.onAllNodesWithContentDescription(compose.activity.getString(R.string.mobile_next_version_514439d0)).assertCountEquals(0)
+        if (capturePattern?.matches(name) == false) return
         compose.runOnIdle {
             val view = compose.activity.window.decorView
             val bitmap = Bitmap.createBitmap(view.width, view.height, Bitmap.Config.ARGB_8888)
