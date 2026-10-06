@@ -191,38 +191,35 @@ fun PredictiveChipsRow(
         chips.forEach { chip ->
             AssistChip(
                 onClick = { onSelect(chip) },
+                modifier = Modifier.heightIn(min = 48.dp),
+                shape = RoundedCornerShape(20.dp),
                 label = { Text(chip.title, fontSize = 13.sp) },
                 leadingIcon = chip.icon?.let { icon ->
-                    { Text(quickReplyGlyph(icon), fontSize = 13.sp) }
+                    { androidx.compose.material3.Icon(androidx.compose.ui.res.painterResource(quickReplyDrawable(icon)), null, tint = chatTint.ink) }
                 },
-                border = AssistChipDefaults.assistChipBorder(enabled = true),
+                colors = AssistChipDefaults.assistChipColors(containerColor = chatTint.theirs, labelColor = chatTint.ink),
+                border = null,
             )
         }
         Spacer(Modifier.width(4.dp))
     }
 }
 
-/**
- * Small platform-neutral marks for the icon choices stored with a reply.
- *
- * One table, drawn by the composer's chips and offered by `QuickRepliesEditor`:
- * a mark someone picks in Settings is the mark that appears above the composer
- * because it is literally the same branch, not a copy that agrees today.
- */
-internal fun quickReplyGlyph(icon: String): String = when (icon) {
-    "next" -> "→"
-    "diff" -> "±"
-    "tests" -> "✓"
-    "explain" -> "?"
-    "build" -> "⌁"
-    "bug" -> "!"
-    "document" -> "▤"
-    "terminal" -> ">_"
-    "send" -> "↑"
-    "search" -> "⌕"
-    "history" -> "↶"
-    "list" -> "☷"
-    else -> "•"
+/** The editor and composer share the same authored icons, never text pretending to be icons. */
+internal fun quickReplyDrawable(icon: String): Int = when (icon) {
+    "next" -> com.openmausbot.companion.R.drawable.ic_tool_next
+    "diff" -> com.openmausbot.companion.R.drawable.ic_tool_diff
+    "tests" -> com.openmausbot.companion.R.drawable.ic_tool_check
+    "explain" -> com.openmausbot.companion.R.drawable.ic_tool_chat
+    "build" -> com.openmausbot.companion.R.drawable.ic_tool_computer
+    "bug" -> com.openmausbot.companion.R.drawable.ic_tool_bug
+    "document" -> com.openmausbot.companion.R.drawable.ic_tool_document
+    "terminal" -> com.openmausbot.companion.R.drawable.ic_tool_terminal
+    "send" -> com.openmausbot.companion.R.drawable.ic_tool_send
+    "search" -> com.openmausbot.companion.R.drawable.ic_tool_search
+    "history" -> com.openmausbot.companion.R.drawable.ic_schedule
+    "list" -> com.openmausbot.companion.R.drawable.ic_tool_list
+    else -> com.openmausbot.companion.R.drawable.ic_tool_bookmark
 }
 
 private val HUD_RADIUS = 16.dp

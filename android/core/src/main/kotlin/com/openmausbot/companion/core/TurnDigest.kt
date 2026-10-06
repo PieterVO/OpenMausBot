@@ -14,6 +14,17 @@ data class TurnDigest(val sections: List<Section>, val toolCalls: Int) {
     /** [label] is null for a part with no known label; [items] are its lines. */
     data class Section(val label: String?, val items: List<String>)
 
+    /** Only tool-section suffixes count; a reply or filename mentioning failure does not. */
+    val failedCalls: Int
+        get() {
+            var failed = 0
+            for (section in sections) {
+                if (section.label != "tools") continue
+                for (item in section.items) failed += FAILED.find(item)?.groupValues?.get(1)?.toIntOrNull() ?: 0
+            }
+            return failed
+        }
+
     /** The chip's words: the count only when there were tool calls to count. */
     val chipLabel: String
         get() = when (toolCalls) {
@@ -33,6 +44,7 @@ data class TurnDigest(val sections: List<Section>, val toolCalls: Int) {
         /** `name ×N` with an optional `(k failed)`; lazy, so a name may hold ", ". */
         private val TOOL = Regex("""(?:^|, )((.+?) ×(\d+)(?: \(\d+ failed\))?)(?=, |$)""")
         private val TOOL_NOTES = listOf(" (from tool previews)")
+        private val FAILED = Regex("""\((\d+) failed\)$""")
         private val MORE = Regex(""" \+\d+ more$""")
 
         fun parse(text: String?): TurnDigest {
@@ -82,7 +94,7 @@ data class TurnDigest(val sections: List<Section>, val toolCalls: Int) {
             val parsed = matches.isNotEmpty() && matches.joinToString("") { it.value } == rest
             if (!parsed) return listOf(body) to 0
             val items = matches.map { it.groupValues[1] } + notes
-            return items to matches.sumOf { it.groupValues[3].toInt() }
+            return items to matches.sumOf { it.groupValues[3].toIntOrNull() ?: 0 }
         }
     }
 }

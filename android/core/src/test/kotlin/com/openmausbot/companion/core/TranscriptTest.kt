@@ -8,11 +8,10 @@ import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
 /**
- * Expectations for Android's own diff and table cards. iOS no longer uses
- * `parsedTable` or the SQL result card; bringing Android across is issue 1707.
- * The 80-line prefix in
- * `ios/App/Cards/GitPRDiffCardView.swift`, and `reasoning.suffix(2_000)` in
- * `StreamingBubble`. None of them derived from the Kotlin under test.
+ * Expectations for Android's diff cards and the shared Markdown table parser.
+ * Diff previews keep the 80-line prefix from the iOS card, and the reasoning
+ * suffix keeps `reasoning.suffix(2_000)` from `StreamingBubble`. Whole-message
+ * tables must match the Markdown renderer without cutting out surrounding text.
  *
  * Half of this file is about what must *not* become a card. That is the half
  * that matters: a loose gate does not fail loudly, it quietly turns somebody's
@@ -157,32 +156,39 @@ class DataTableTest {
         val card = assertNotNull(TranscriptCards.table(table))
         assertEquals(listOf("Name", "Rows"), card.headers)
         assertEquals(listOf(listOf("bots", "12"), listOf("rooms", "3")), card.rows)
+        assertEquals(listOf(MarkdownTableAlignment.LEADING, MarkdownTableAlignment.TRAILING), card.alignments)
     }
 
     @Test
-    fun `alignment colons are part of a separator, two hyphens are not`() {
-        assertNotNull(TranscriptCards.table("| a |\n| :---: |\n| 1 |"))
-        assertNotNull(TranscriptCards.table("| a |\n| - - - |\n| 1 |"))
-        assertNull(TranscriptCards.table("| a |\n| -- |\n| 1 |"))
-        assertNull(TranscriptCards.table("| a |\n| :-: |\n| 1 |"))
+    fun `alignment colons and short delimiters follow the Markdown parser`() {
+        val centered = assertNotNull(TranscriptCards.table("| a |\n| :---: |\n| 1 |"))
+        assertEquals(listOf(MarkdownTableAlignment.CENTER), centered.alignments)
+        assertNotNull(TranscriptCards.table("| a |\n| -- |\n| 1 |"))
+        assertNotNull(TranscriptCards.table("| a |\n| :-: |\n| 1 |"))
+        assertNull(TranscriptCards.table("| a |\n| - - - |\n| 1 |"))
     }
 
     @Test
-    fun `a ragged row is not a table`() {
-        assertNull(TranscriptCards.table("| a | b |\n| --- | --- |\n| 1 | 2 |\n| 3 |"))
-        assertNull(TranscriptCards.table("| a | b |\n| --- | --- |\n| 1 | 2 | 3 |"))
+    fun `ragged rows pad and wider rows grow every earlier row`() {
+        val padded = assertNotNull(TranscriptCards.table("| a | b |\n| --- | --- |\n| 1 | 2 |\n| 3 |"))
+        assertEquals(listOf(listOf("1", "2"), listOf("3", "")), padded.rows)
+        val grown = assertNotNull(TranscriptCards.table("| a | b |\n| --- | --- |\n| 1 | 2 |\n| 3 | 4 | 5 |"))
+        assertEquals(listOf("a", "b", ""), grown.headers)
+        assertEquals(listOf(listOf("1", "2", ""), listOf("3", "4", "5")), grown.rows)
+        assertEquals(List(3) { MarkdownTableAlignment.LEADING }, grown.alignments)
     }
 
     @Test
-    fun `a separator that does not match the header is not a table`() {
-        assertNull(TranscriptCards.table("| a | b |\n| --- |\n| 1 | 2 |"))
+    fun `missing delimiter alignments default to leading`() {
+        val card = assertNotNull(TranscriptCards.table("| a | b |\n| ---: |\n| 1 | 2 |"))
+        assertEquals(listOf(MarkdownTableAlignment.TRAILING, MarkdownTableAlignment.LEADING), card.alignments)
     }
 
     @Test
-    fun `every line must carry both edge pipes`() {
-        assertNull(TranscriptCards.table("a | b\n--- | ---\n1 | 2"))
-        assertNull(TranscriptCards.table("| a | b |\n| --- | --- |\n| 1 | 2"))
-        assertNull(TranscriptCards.table("| a | b |\n--- | --- |\n| 1 | 2 |"))
+    fun `outer pipes are optional just as in an embedded table`() {
+        assertNotNull(TranscriptCards.table("a | b\n--- | ---\n1 | 2"))
+        assertNotNull(TranscriptCards.table("| a | b |\n| --- | --- |\n| 1 | 2"))
+        assertNotNull(TranscriptCards.table("| a | b |\n--- | --- |\n| 1 | 2 |"))
     }
 
     @Test
@@ -192,8 +198,10 @@ class DataTableTest {
     }
 
     @Test
-    fun `a header and a separator alone are not a table`() {
-        assertNull(TranscriptCards.table("| a | b |\n| --- | --- |"))
+    fun `a header and delimiter are a table even before a body arrives`() {
+        val card = assertNotNull(TranscriptCards.table("| a | b |\n| --- | --- |"))
+        assertEquals(emptyList(), card.rows)
+        assertEquals("a,b", card.csv())
     }
 
     @Test
@@ -213,8 +221,9 @@ class DataTableTest {
     }
 
     @Test
-    fun `blank lines between rows do not break the table`() {
-        assertNotNull(TranscriptCards.table("| a |\n| --- |\n\n| 1 |\n"))
+    fun `a blank line ends the table rather than absorbing a later paragraph`() {
+        assertNull(TranscriptCards.table("| a |\n| --- |\n\n| 1 |\n"))
+        assertNotNull(TranscriptCards.table("\n| a |\n| --- |\n| 1 |\n"))
     }
 
     @Test

@@ -31,6 +31,19 @@ class ChatPreferencesTest {
     )
 
     @Test
+    fun `work summaries start off and persist independently of activity detail`() {
+        val first = store("chat-summaries")
+        assertEquals(false, first.showWorkSummaries.value)
+        first.setShowWorkSummaries(true)
+        first.setActivityDetail(ActivityDetail.HIDDEN)
+        val relaunched = store("chat-summaries")
+        assertEquals(true, relaunched.showWorkSummaries.value)
+        assertEquals(ActivityDetail.HIDDEN, relaunched.activityDetail.value)
+        relaunched.setShowWorkSummaries(false)
+        assertEquals(false, store("chat-summaries").showWorkSummaries.value)
+    }
+
+    @Test
     fun `activity detail survives a new preferences instance`() {
         val name = "chat-activity-detail"
         store(name).setActivityDetail(ActivityDetail.HIDDEN)

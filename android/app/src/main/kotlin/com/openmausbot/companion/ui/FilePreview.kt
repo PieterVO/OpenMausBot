@@ -629,10 +629,10 @@ private fun GenericFilePreview(item: FilePreviewItem) {
         Box(
             modifier = Modifier
                 .size(88.dp)
-                .background(MaterialTheme.colorScheme.primary.copy(alpha = 0.12f), androidx.compose.foundation.shape.RoundedCornerShape(22.dp)),
+                .background(chatTint.glyphFill, androidx.compose.foundation.shape.RoundedCornerShape(20.dp)),
             contentAlignment = Alignment.Center,
         ) {
-            Text(suffix, color = MaterialTheme.colorScheme.primary, fontWeight = FontWeight.Bold)
+            Text(suffix, color = chatTint.ink, fontWeight = FontWeight.Bold)
         }
         Text(
             text = item.filename,

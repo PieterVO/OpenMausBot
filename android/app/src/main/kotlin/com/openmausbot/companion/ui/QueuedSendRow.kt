@@ -10,6 +10,7 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.Send
@@ -69,8 +70,8 @@ fun QueuedSendRow(
 ) {
     Row(
         modifier = modifier
-            .clip(RoundedCornerShape(18.dp))
-            .background(MaterialTheme.colorScheme.onSurface.copy(alpha = 0.08f))
+            .clip(RoundedCornerShape(20.dp))
+            .background(chatTint.theirs)
             .padding(start = 12.dp, end = 6.dp, top = 6.dp, bottom = 6.dp),
         horizontalArrangement = Arrangement.spacedBy(8.dp),
         verticalAlignment = Alignment.CenterVertically,
@@ -86,8 +87,9 @@ fun QueuedSendRow(
             Row(
                 modifier = Modifier
                     .clip(RoundedCornerShape(50))
-                    .background(MaterialTheme.colorScheme.onSurface.copy(alpha = 0.12f))
+                    .background(chatTint.inset)
                     .clickable(enabled = !steering, role = Role.Button, onClick = onSteer)
+                    .heightIn(min = 48.dp)
                     .padding(horizontal = 11.dp, vertical = 6.dp),
                 horizontalArrangement = Arrangement.spacedBy(4.dp),
                 verticalAlignment = Alignment.CenterVertically,
@@ -119,8 +121,8 @@ fun QueuedSendRow(
             modifier = Modifier
                 .clip(RoundedCornerShape(50))
                 .clickable(role = Role.Button, onClick = onEdit)
-                .padding(6.dp)
-                .size(16.dp),
+                .size(48.dp)
+                .padding(15.dp),
         )
         Icon(
             imageVector = Icons.Filled.Delete,
@@ -129,8 +131,8 @@ fun QueuedSendRow(
             modifier = Modifier
                 .clip(RoundedCornerShape(50))
                 .clickable(role = Role.Button, onClick = onCancel)
-                .padding(6.dp)
-                .size(16.dp),
+                .size(48.dp)
+                .padding(15.dp),
         )
     }
 }

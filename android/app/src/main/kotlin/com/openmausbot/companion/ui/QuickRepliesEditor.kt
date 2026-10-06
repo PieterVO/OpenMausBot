@@ -210,7 +210,7 @@ private fun QuickReplyForm(
                             },
                             // The composer's own table, so the mark chosen here is
                             // the mark that turns up above the composer.
-                            label = { Text(quickReplyGlyph(choice), fontSize = 13.sp) },
+                            label = { androidx.compose.material3.Icon(androidx.compose.ui.res.painterResource(quickReplyDrawable(choice)), null, tint = chatTint.ink) },
                             // The glyph is a mark, not a word: the id is what a
                             // screen reader can say, as iOS's `accessibilityLabel(icon)` does.
                             modifier = Modifier.semantics { contentDescription = choice },

@@ -10,6 +10,7 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
@@ -37,9 +38,17 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.drawWithContent
+import androidx.compose.ui.draw.drawBehind
+import androidx.compose.ui.graphics.compositeOver
+import androidx.compose.ui.graphics.Brush
+import com.openmausbot.companion.core.MarkdownTableAlignment
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.Layout
 import androidx.compose.ui.layout.MeasurePolicy
+import androidx.compose.ui.platform.LocalLayoutDirection
+import androidx.compose.ui.unit.LayoutDirection
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.ClipEntry
 import androidx.compose.ui.platform.LocalClipboard
 import androidx.compose.ui.res.painterResource
@@ -61,22 +70,7 @@ import com.openmausbot.companion.core.TranscriptCard
 import java.util.Locale
 import kotlinx.coroutines.launch
 
-/**
- * The three affordances a transcript grows when the reply is more than prose —
- * the port of `ios/App/Cards/GitPRDiffCardView.swift` and
- * `ios/App/Cards/AgentThoughtChamberView.swift`, plus Android's own data-table
- * card. iOS now draws a pipe table as markdown; matching that is issue 1707.
- *
- * Whether a reply *is* one of these is `TranscriptCards` in `:core`, and it is
- * strict on purpose: a card that swallowed a paragraph would hide the answer
- * inside it. This file is only the drawing, and it is Material drawing. The iOS
- * cards are gradients over `.ultraThinMaterial` with Tailwind hexes; the same
- * information here is a tonal surface, the app's own palette for the two colours
- * a diff actually means (added, removed), and Material's divider and text
- * button. What is not free, and is kept exactly: the whole patch on the
- * clipboard, RFC 4180 quoting, the 80-line preview, and a chamber that starts
- * closed.
- */
+/** Native patch and table surfaces; copy and row-major accessibility stay unchanged. */
 
 /** What the clipboard shows a copied card came from. */
 private const val CARD_CLIP_LABEL = "OpenMausMobile card"
@@ -104,7 +98,7 @@ fun DiffCard(card: TranscriptCard.Diff, modifier: Modifier = Modifier) {
     Column(
         modifier = modifier
             .fillMaxWidth()
-            .background(MaterialTheme.colorScheme.surfaceContainer, RoundedCornerShape(14.dp))
+            .background(chatTint.theirs, RoundedCornerShape(20.dp))
             .padding(12.dp),
         verticalArrangement = Arrangement.spacedBy(8.dp),
     ) {
@@ -215,7 +209,7 @@ fun DiffCard(card: TranscriptCard.Diff, modifier: Modifier = Modifier) {
         HorizontalDivider(color = secondaryTint.copy(alpha = 0.2f))
 
         TextButton(onClick = { copy(card.text) }) {
-            Text(stringResource(R.string.mobile_copy_diff_18f2296a), fontSize = 13.sp)
+            Text(stringResource(R.string.mobile_copy_diff_18f2296a), fontSize = 13.sp, color = chatTint.ink)
         }
     }
 }
@@ -285,12 +279,15 @@ private fun DiffLine(line: String) {
 fun DataTableCard(card: TranscriptCard.Table, modifier: Modifier = Modifier) {
     val copy = rememberCopy()
     val scroll = rememberScrollState()
+    val fadeSurface = chatTint.inset.compositeOver(chatTint.theirs).compositeOver(MaterialTheme.colorScheme.surface)
+    val rtl = LocalLayoutDirection.current == LayoutDirection.Rtl
 
     Column(
         modifier = modifier
             .fillMaxWidth()
-            .background(MaterialTheme.colorScheme.surfaceContainer, RoundedCornerShape(14.dp))
-            .padding(12.dp),
+            .clip(RoundedCornerShape(12.dp))
+            .background(chatTint.inset)
+            .padding(10.dp),
         verticalArrangement = Arrangement.spacedBy(8.dp),
     ) {
         Row(
@@ -302,7 +299,7 @@ fun DataTableCard(card: TranscriptCard.Table, modifier: Modifier = Modifier) {
                 text = stringResource(R.string.mobile_data_table_54baf78e),
                 fontSize = 12.sp,
                 fontWeight = FontWeight.Bold,
-                color = MaterialTheme.colorScheme.primary,
+                color = chatTint.ink,
                 modifier = Modifier.weight(1f),
             )
             Text(
@@ -317,19 +314,24 @@ fun DataTableCard(card: TranscriptCard.Table, modifier: Modifier = Modifier) {
         }
 
         SelectionContainer {
-            DataGrid(
-                headers = card.headers,
-                rows = card.rows,
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .horizontalScroll(scroll),
-            )
+            Box(Modifier.fillMaxWidth().drawWithContent {
+                drawContent()
+                if (scroll.canScrollForward) drawRect(
+                    Brush.horizontalGradient(if (rtl) listOf(fadeSurface, Color.Transparent) else listOf(Color.Transparent, fadeSurface),
+                        startX = if (rtl) 0f else size.width - 24.dp.toPx(), endX = if (rtl) 24.dp.toPx() else size.width),
+                    topLeft = androidx.compose.ui.geometry.Offset(if (rtl) 0f else size.width - 24.dp.toPx(), 0f),
+                    size = androidx.compose.ui.geometry.Size(24.dp.toPx(), size.height),
+                )
+            }) {
+                DataGrid(headers = card.headers, rows = card.rows, alignments = card.alignments,
+                    modifier = Modifier.fillMaxWidth().horizontalScroll(scroll))
+            }
         }
 
         HorizontalDivider(color = secondaryTint.copy(alpha = 0.2f))
 
         TextButton(onClick = { copy(card.csv()) }) {
-            Text(stringResource(R.string.mobile_copy_csv_b810b7cd), fontSize = 13.sp)
+            Text(stringResource(R.string.mobile_copy_csv_b810b7cd), fontSize = 13.sp, color = chatTint.ink)
         }
     }
 }
@@ -349,11 +351,15 @@ private fun DataGrid(
     headers: List<String>,
     rows: List<List<String>>,
     modifier: Modifier = Modifier,
+    alignments: List<MarkdownTableAlignment> = emptyList(),
 ) {
     if (headers.isEmpty()) return
+    val separator = MaterialTheme.colorScheme.outlineVariant
     val ruleColour = secondaryTint.copy(alpha = 0.25f)
+    val headerFill = chatTint.inset.copy(alpha = (chatTint.inset.alpha * 2f).coerceAtMost(1f))
+    val headerHeight = with(LocalDensity.current) { MaterialTheme.typography.titleSmall.lineHeight.toPx() + 16.dp.toPx() }
     Layout(
-        modifier = modifier,
+        modifier = modifier.drawBehind { drawRect(headerFill, size = androidx.compose.ui.geometry.Size(size.width, headerHeight)) },
         content = {
             headers.forEach { header ->
                 Text(
@@ -361,11 +367,11 @@ private fun DataGrid(
                     // section label in this app: a reader in `tr-TR` must still
                     // read the column name, not a dotted capital.
                     text = header.uppercase(Locale.ROOT),
-                    fontSize = 11.sp,
-                    fontFamily = FontFamily.Monospace,
-                    fontWeight = FontWeight.Bold,
-                    color = MaterialTheme.colorScheme.primary,
+                    style = MaterialTheme.typography.titleSmall.copy(fontFeatureSettings = "tnum"),
+                    fontWeight = FontWeight.SemiBold,
+                    color = MaterialTheme.colorScheme.onSurface,
                     softWrap = false,
+                    modifier = Modifier.padding(horizontal = 6.dp, vertical = 8.dp),
                 )
             }
             repeat(headers.size) {
@@ -373,20 +379,23 @@ private fun DataGrid(
             }
             rows.forEach { row ->
                 headers.indices.forEach { column ->
-                    Text(
+                    MarkdownInlineText(
                         // A short row is padded, not dropped: iOS reads
                         // `colIdx < row.count ? row[colIdx] : stringResource(R.string.mobile_text_da39a3ee)` for the same
                         // reason, and a missing cell that took no space would
                         // slide the rest of the row under the wrong heading.
                         text = row.getOrElse(column) { "" },
-                        fontSize = 12.sp,
-                        fontFamily = FontFamily.Monospace,
-                        softWrap = false,
+                        tail = false,
+                        style = MaterialTheme.typography.bodyMedium.copy(fontFeatureSettings = "tnum"),
+                        modifier = Modifier.drawBehind {
+                            drawLine(separator, androidx.compose.ui.geometry.Offset(0f, size.height),
+                                androidx.compose.ui.geometry.Offset(size.width, size.height), strokeWidth = 0.5.dp.toPx())
+                        }.padding(horizontal = 6.dp, vertical = 8.dp),
                     )
                 }
             }
         },
-        measurePolicy = tableGridMeasurePolicy(columnCount = headers.size),
+        measurePolicy = tableGridMeasurePolicy(columnCount = headers.size, alignments = alignments),
     )
 }
 
@@ -419,6 +428,7 @@ internal fun tableGridMeasurePolicy(
     minColumnWidth: Dp = TABLE_MIN_COLUMN_WIDTH,
     columnGap: Dp = TABLE_COLUMN_GAP,
     rowGap: Dp = TABLE_ROW_GAP,
+    alignments: List<MarkdownTableAlignment> = emptyList(),
 ): MeasurePolicy = MeasurePolicy { measurables, constraints ->
     require(columnCount > 0) { "a table with no columns has nothing to lay out" }
     val rowCount = (measurables.size - columnCount * 2) / columnCount
@@ -460,124 +470,20 @@ internal fun tableGridMeasurePolicy(
         baseline += (0 until columnCount).maxOf { cells[row * columnCount + it].height }
     }
 
+    fun alignedX(column: Int, childWidth: Int): Int = x[column] + when (alignments.getOrNull(column)) {
+        MarkdownTableAlignment.TRAILING -> widths[column] - childWidth
+        MarkdownTableAlignment.CENTER -> (widths[column] - childWidth) / 2
+        else -> 0
+    }
     layout(constraints.constrainWidth(width), constraints.constrainHeight(baseline)) {
-        headings.forEachIndexed { column, heading -> heading.placeRelative(x[column], 0) }
+        headings.forEachIndexed { column, heading -> heading.placeRelative(alignedX(column, heading.width), 0) }
         rules.forEachIndexed { column, rule -> rule.placeRelative(x[column], ruleY) }
         cells.forEachIndexed { index, cell ->
-            cell.placeRelative(x[index % columnCount], y[index / columnCount])
+            cell.placeRelative(alignedX(index % columnCount, cell.width), y[index / columnCount])
         }
     }
 }
 
-/**
- * The bot thinking out loud, folded away until it is asked for.
- *
- * Closed by default: reasoning is not the answer, and a wall of it above an
- * empty bubble reads as the reply itself. Open, it is the last
- * [Reasoning.VISIBLE_CHARACTERS] characters as numbered lines in their own
- * scroller — 2,000 rather than the 400 this used to show, which was a quarter of
- * the thought with no way to reach the rest.
- */
-@Composable
-fun ThoughtChamber(
-    reasoning: String,
-    modifier: Modifier = Modifier,
-    streaming: Boolean = true,
-) {
-    val steps = remember(reasoning) { Reasoning.steps(reasoning) }
-    var expanded by rememberSaveable { mutableStateOf(false) }
-    // `AgentThoughtChamberView.swift` fires `Haptics.selection()` on the header.
-    val haptics = rememberHaptics()
-
-    Column(
-        modifier = modifier.fillMaxWidth(),
-        verticalArrangement = Arrangement.spacedBy(6.dp),
-    ) {
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .heightIn(min = MIN_TOUCH_TARGET)
-                .background(secondaryTint.copy(alpha = 0.12f), CircleShape)
-                .clickable(
-                    role = Role.Button,
-                    onClickLabel = if (expanded) "Collapse" else "Expand",
-                    onClick = {
-                        haptics.play(HapticCue.SELECT)
-                        expanded = !expanded
-                    },
-                )
-                .localizedSemantics(stateDescription = {
-                    stringResource(
-                        if (expanded) R.string.mobile_a11y_expanded else R.string.mobile_a11y_collapsed,
-                    )
-                })
-                .padding(horizontal = 14.dp),
-            horizontalArrangement = Arrangement.spacedBy(8.dp),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            Icon(
-                painter = painterResource(R.drawable.ic_sparkles),
-                contentDescription = null,
-                tint = MaterialTheme.colorScheme.primary,
-                modifier = Modifier.size(16.dp),
-            )
-            Text(
-                text = if (streaming) stringResource(R.string.mobile_thinking_a60d9c9c) else stringResource(R.string.mobile_thought_process_1756ad28),
-                fontSize = 13.sp,
-                fontWeight = FontWeight.SemiBold,
-                modifier = Modifier.weight(1f),
-            )
-            Text(
-                text = if (steps.size == 1) {
-                    stringResource(R.string.mobile_step_29869c51)
-                } else {
-                    stringResource(R.string.mobile_steps_count, steps.size)
-                },
-                fontSize = 12.sp,
-                fontFamily = FontFamily.Monospace,
-                color = secondaryTint,
-            )
-            Icon(
-                imageVector = if (expanded) {
-                    Icons.Filled.KeyboardArrowUp
-                } else {
-                    Icons.Filled.KeyboardArrowDown
-                },
-                contentDescription = null,
-                tint = secondaryTint,
-                modifier = Modifier.size(18.dp),
-            )
-        }
-
-        if (expanded) {
-            Column(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .background(
-                        secondaryTint.copy(alpha = 0.08f),
-                        RoundedCornerShape(12.dp),
-                    )
-                    .heightIn(max = CHAMBER_HEIGHT)
-                    .verticalScroll(rememberScrollState())
-                    .padding(12.dp),
-                verticalArrangement = Arrangement.spacedBy(4.dp),
-            ) {
-                steps.forEachIndexed { index, step ->
-                    Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                        Text(
-                            text = "${index + 1}.",
-                            fontSize = 12.sp,
-                            fontFamily = FontFamily.Monospace,
-                            fontWeight = FontWeight.Bold,
-                            color = MaterialTheme.colorScheme.primary,
-                        )
-                        Text(text = step, fontSize = 13.sp, color = secondaryTint)
-                    }
-                }
-            }
-        }
-    }
-}
 
 /** Hide/View, announced as the disclosure it is. */
 @Composable
@@ -658,5 +564,3 @@ private fun rememberCopy(): CardClipboard {
         )
     }
 }
-
-private val CHAMBER_HEIGHT = 180.dp

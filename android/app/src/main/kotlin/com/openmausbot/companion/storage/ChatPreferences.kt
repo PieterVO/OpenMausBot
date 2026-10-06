@@ -32,6 +32,15 @@ class ChatPreferences(
     )
     val activityDetail: StateFlow<ActivityDetail> = _activityDetail.asStateFlow()
 
+    private val _showWorkSummaries = MutableStateFlow(prefs.getBoolean(SHOW_WORK_SUMMARIES, false))
+    val showWorkSummaries: StateFlow<Boolean> = _showWorkSummaries.asStateFlow()
+
+    fun setShowWorkSummaries(show: Boolean) {
+        if (_showWorkSummaries.value == show && prefs.contains(SHOW_WORK_SUMMARIES)) return
+        prefs.edit().putBoolean(SHOW_WORK_SUMMARIES, show).commit()
+        _showWorkSummaries.value = show
+    }
+
     private val _quickReplies = MutableStateFlow(QuickReply.decode(prefs.getString(QUICK_REPLIES, "").orEmpty()))
     val quickReplies: StateFlow<List<QuickReply>> = _quickReplies.asStateFlow()
 
@@ -108,6 +117,7 @@ class ChatPreferences(
         const val NAME = "openmaus.chat-preferences"
         const val FILE = "$NAME.xml"
         private const val ACTIVITY_DETAIL = "companion.prefs.activityDetail"
+        private const val SHOW_WORK_SUMMARIES = "companion.prefs.showWorkSummaries"
         private const val QUICK_REPLIES = "companion.prefs.quickReplies"
         private const val APPEARANCE_SKIN = "companion.prefs.appearanceSkin"
         private const val ROSTER_DENSITY = "companion.prefs.rosterDensity"

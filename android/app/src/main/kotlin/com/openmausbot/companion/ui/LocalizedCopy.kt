@@ -6,6 +6,16 @@ import com.openmausbot.companion.R
 
 /** Translates fixed English copy returned by UI policy helpers. */
 private val localizedCopyResources = mapOf(
+    "Based on tool previews; some activity may not be included." to R.string.mobile_chat_preview_coverage,
+    "Work summaries" to R.string.mobile_chat_work_summaries,
+    "Show what each reply did under it. Always shown when a step failed." to R.string.mobile_chat_work_summaries_caption,
+    "Plan" to R.string.mobile_chat_plan,
+    "All done" to R.string.mobile_chat_all_done,
+    "More items not shown" to R.string.mobile_chat_plan_truncated,
+    "Thinking" to R.string.mobile_chat_thinking,
+    "To do" to R.string.mobile_chat_pending,
+    "In progress" to R.string.mobile_chat_active,
+    "Cancelled" to R.string.mobile_chat_cancelled,
     "Threads list" to R.string.mobile_threads_list,
     "List density" to R.string.mobile_list_density,
     "Change list density" to R.string.mobile_change_list_density,
@@ -647,4 +657,15 @@ internal fun localizedMobileCopy(source: String): String {
     Regex("""^(\d+) unsupported items were left out\.$""")
         .matchEntire(source)?.let { return stringResource(R.string.mobile_share_items_omitted, it.groupValues[1].toInt()) }
     return source
+}
+
+@Composable
+internal fun localizedDigestLine(model: com.openmausbot.companion.core.DigestPresentation): String {
+    val parts = mutableListOf<String>()
+    if (model.failedCalls > 0) parts += androidx.compose.ui.res.pluralStringResource(R.plurals.mobile_chat_failed_count, model.failedCalls, model.failedCalls)
+    else if (model.hasProblem) parts += stringResource(R.string.mobile_chat_turn_failed)
+    model.duration?.let { parts += stringResource(R.string.mobile_chat_worked_duration, it) }
+    if (model.toolCalls > 0) parts += androidx.compose.ui.res.pluralStringResource(R.plurals.mobile_chat_tool_count, model.toolCalls, model.toolCalls)
+    if (model.files.count > 0) parts += androidx.compose.ui.res.pluralStringResource(R.plurals.mobile_chat_file_count, model.files.count, model.files.count)
+    return parts.joinToString(" · ").ifEmpty { localizedMobileCopy("What I did") }
 }

@@ -783,4 +783,30 @@
     <string name="mobile_density_compact_caption">每個機器人佔一行。擁有多個活躍對話的機器人會顯示對話數量；點按數字即可列出對話。</string>
     <string name="mobile_mention_someone">提及某人</string>
     <string name="mobile_mention_everyone">此對話中的所有人</string>
+    <string name="mobile_chat_work_summaries">工作摘要</string>
+    <string name="mobile_chat_work_summaries_caption">在每則回覆下顯示完成的工作。步驟失敗時一律顯示。</string>
+    <string name="mobile_chat_plan">計畫</string>
+    <string name="mobile_chat_all_done">全部完成</string>
+    <string name="mobile_chat_plan_progress">%1$d / %2$d</string>
+    <string name="mobile_chat_plan_show_all">顯示全部 %1$d 項</string>
+    <string name="mobile_chat_plan_truncated">還有項目未顯示</string>
+    <string name="mobile_chat_thinking">思考中</string>
+    <string name="mobile_chat_thought_for">思考了 %1$d 秒</string>
+    <string name="mobile_chat_what_bot_did">%1$s 完成的工作</string>
+    <string name="mobile_chat_say_hi">向 %1$s 打個招呼</string>
+    <string name="mobile_chat_done">完成</string>
+    <string name="mobile_chat_pending">待辦</string>
+    <string name="mobile_chat_active">進行中</string>
+    <string name="mobile_chat_cancelled">已取消</string>
+    <string name="mobile_chat_worked_duration">工作了 %1$s</string>
+    <string name="mobile_chat_turn_failed">本輪失敗</string>
+    <string name="mobile_chat_tokens">%1$s 個詞元</string>
+    <string name="mobile_chat_plan_a11y">計畫，已完成 %1$d / %2$d 項</string>
+    <string name="mobile_chat_preview_coverage">根據工具預覽；可能未包含部分活動。</string>
+    <string name="mobile_chat_item_a11y">%1$s，%2$s</string>
+    <plurals name="mobile_chat_tool_count"><item quantity="other">%d 個工具</item></plurals>
+    <plurals name="mobile_chat_file_count"><item quantity="other">%d 個檔案</item></plurals>
+    <plurals name="mobile_chat_failed_count"><item quantity="other">%d 個失敗步驟</item></plurals>
+    <plurals name="mobile_chat_memory_count"><item quantity="other">%d 次記憶變更</item></plurals>
+    <string name="mobile_chat_jump_latest">跳至最新訊息</string>
 </resources>

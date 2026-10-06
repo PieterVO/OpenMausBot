@@ -239,9 +239,8 @@ internal fun PendingAttachmentChip(
     Row(
         modifier = Modifier
             .widthIn(max = 280.dp)
-            .clip(RoundedCornerShape(14.dp))
-            .background(outline)
-            .border(1.dp, outline, RoundedCornerShape(14.dp))
+            .clip(RoundedCornerShape(20.dp))
+            .background(chatTint.theirs)
             .padding(start = 7.dp, end = 6.dp, top = 6.dp, bottom = 6.dp),
         horizontalArrangement = Arrangement.spacedBy(8.dp),
         verticalAlignment = Alignment.CenterVertically,
@@ -312,13 +311,13 @@ private fun AttachmentThumbnail(attachment: PendingMessageAttachment) {
         Box(
             modifier = Modifier
                 .size(34.dp)
-                .background(MaterialTheme.colorScheme.primary.copy(alpha = 0.12f), shape),
+                .background(chatTint.glyphFill, shape),
             contentAlignment = Alignment.Center,
         ) {
             Icon(
                 painter = painterResource(R.drawable.ic_attach_file),
                 contentDescription = null,
-                tint = MaterialTheme.colorScheme.primary,
+                tint = chatTint.ink,
                 modifier = Modifier.size(18.dp),
             )
         }
