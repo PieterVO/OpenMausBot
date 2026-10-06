@@ -5,6 +5,9 @@ import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.animateContentSize
 import androidx.compose.animation.core.spring
 import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.Animatable
+import androidx.compose.animation.core.tween
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.draw.rotate
 import androidx.compose.ui.platform.testTag
 import androidx.compose.material.icons.filled.Info
@@ -75,6 +78,10 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.runtime.key
+import androidx.compose.runtime.SideEffect
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.snapshotFlow
 import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Alignment
@@ -122,6 +129,7 @@ import com.openmausbot.companion.core.routineExecutionRef
 import com.openmausbot.companion.core.TranscriptCard
 import com.openmausbot.companion.core.TranscriptCards
 import com.openmausbot.companion.core.webhookContent
+import com.openmausbot.companion.core.StreamingText
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
@@ -175,6 +183,11 @@ fun MessageRow(
     val editPending = state.pendingEdits[chat.threadId]
     val isPendingEdit = editPending?.placeholderId == message.id
     val mine = message.role == Message.Role.USER
+    val requestedReveal = LocalTextArrival.current
+    val accessible = touchExplorationEnabled()
+    val reveal = remember(message.id) { requestedReveal } && !accessible
+    val paced = if (!mine && message.kind == Message.Kind.TEXT)
+        key(message.id) { rememberPacedText(message.text.orEmpty(), reveal = reveal) } else null
 
     Box(
         modifier = Modifier
@@ -183,6 +196,7 @@ fun MessageRow(
                 Message.Kind.ACTIVITY -> "step-${message.id}"
                 else -> "message-${message.id}"
             })
+            .semantics { if (paced != null) pacedText(paced) }
             // Nested links keep their own taps; the bubble owns details and the menu.
             .combinedClickable(
                 interactionSource = remember { MutableInteractionSource() },
@@ -200,6 +214,7 @@ fun MessageRow(
             val runRef = remember(state, message.routineRun?.executionThreadId) {
                 message.routineRun?.let { state.routineExecutionRef(it) }
             }
+            CompositionLocalProvider(LocalPacedMessage provides paced) {
             MessageContent(
                 chat = chat,
                 message = message,
@@ -211,6 +226,7 @@ fun MessageRow(
                 openThread = openThread,
                 runRef = runRef,
             )
+            }
 
             if (showingMeta && message.kind == Message.Kind.TEXT) {
                 Row(Modifier.testTag("message-meta-${message.id}").heightIn(min = 48.dp),
@@ -533,9 +549,21 @@ private fun TextBubble(
     val mine = message.role == Message.Role.USER
     val tint = conversationTint(message.from?.color ?: color)
     val tail = TranscriptLayout.tail(message, endsRun)
+    val paced = LocalPacedMessage.current
+    val visible = paced?.visible ?: message.text.orEmpty()
+    val source = remember(message.text, visible, paced?.revealing) {
+        val prefix = if (paced != null) StreamingText.revealedPrefix(message.text.orEmpty(), visible.length, final = true) else visible
+        if (paced?.revealing == true) StreamingText.closePartialMarkdown(prefix) else prefix
+    }
+    val revealBubble = LocalTextArrival.current && !touchExplorationEnabled()
+    val fade = remember(message.id) { Animatable(if (revealBubble) 0f else 1f) }
+    LaunchedEffect(message.id, paced?.motion, revealBubble) {
+        if (paced?.motion == false || !revealBubble) fade.snapTo(1f)
+        else if (fade.value < 1f) fade.animateTo(1f, tween(120))
+    }
     // A patch still has its dedicated card; Markdown owns both embedded and whole tables.
     val card = remember(message.id, message.role, message.text) { if (mine) null else TranscriptCards.diff(message.text.orEmpty()) }
-    val blocks = remember(message.text, mine, card) { if (mine || card != null) emptyList() else Markdown.blocks(message.text.orEmpty()) }
+    val blocks = remember(source, mine, card) { if (mine || card != null) emptyList() else Markdown.blocks(source) }
     val hasTable = blocks.any { it is MarkdownBlock.Table }
     // Shared attachments are protocol tags in stored user text. They are not
     // prose, and a server-controlled path must never be presented as a link.
@@ -556,7 +584,7 @@ private fun TextBubble(
         // lets the bubble shrink to its text while never crossing that gutter.
         if (mine) Spacer(Modifier.fillMaxWidth(0.22f))
         Column(
-            modifier = Modifier
+            modifier = Modifier.semantics { this[BubbleMotionAlpha] = fade.value }.graphicsLayer { alpha = fade.value }
                 .weight(1f, fill = false)
                 .widthIn(max = 640.dp)
                 // Room for the tail below, so the next row does not sit on it.
@@ -633,7 +661,7 @@ private fun TextBubble(
                         }
                     }
                 } else {
-                    MarkdownBlocks(blocks = blocks,
+                    MarkdownBlocks(blocks = blocks, settling = paced?.revealing == true && paced.motion,
                         openLink = openLink?.let { open -> { url -> open(url, message) } })
                 }
             }
@@ -1416,14 +1444,23 @@ private sealed interface ScreenShotState {
  */
 @Composable
 fun StreamingBubble(text: String?, reasoning: String?) {
-    Column(Modifier.fillMaxWidth()) {
+    val paced = rememberPacedText(text.orEmpty(), streamOpen = !text.isNullOrEmpty())
+    val recordVisible = LocalLiveTextVisibility.current
+    DisposableEffect(recordVisible) { onDispose { recordVisible(false) } }
+    val source = remember(text, paced.visible) {
+        StreamingText.closePartialMarkdown(StreamingText.revealedPrefix(text.orEmpty(), paced.visible.length, final = false))
+    }
+    SideEffect { recordVisible(source.isNotBlank()) }
+    val blocks = remember(source) { Markdown.blocks(source) }
+    val hasTable = blocks.any { it is MarkdownBlock.Table }
+    Column(Modifier.fillMaxWidth().testTag("streaming-bubble").semantics { pacedText(paced) }) {
         if (!reasoning.isNullOrEmpty()) ThinkingView(reasoning, answering = !text.isNullOrEmpty())
         if (!text.isNullOrEmpty()) Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.Bottom) {
-            Column(Modifier.weight(1f, fill = false).padding(bottom = SpeechBubble.tailDrop())
+            Column(Modifier.weight(1f, fill = false).widthIn(max = 640.dp).padding(bottom = SpeechBubble.tailDrop())
                 .background(chatTint.theirs, SpeechBubbleShape.of(BubbleTail.LEADING)).padding(horizontal = 14.dp, vertical = 9.dp)) {
-                MarkdownText(source = text, caret = true)
+                MarkdownBlocks(blocks, caret = true, settling = paced.revealing && paced.motion, caretAlpha = paced.caretAlpha)
             }
-            Spacer(Modifier.fillMaxWidth(0.20f))
+            Spacer(Modifier.fillMaxWidth(if (hasTable) 0.08f else 0.20f))
         }
     }
 }

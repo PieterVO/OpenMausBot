@@ -27,6 +27,41 @@ Prefix `cleanTest` when a test count matters:
 ./gradlew cleanTest :core:test :app:testDebugUnitTest :app:assembleDebug
 ```
 
+### Conversation motion
+
+Live replies are paced on display frames rather than network batches, revealing
+whole grapheme clusters with a breathing caret and a short rendered-ink tail.
+Partial bold/code markers are temporarily closed for rendering. Tables reveal
+whole rows: the header waits for its complete delimiter, and streaming body rows
+wait for their newline, including when the text pacer has caught up. A reply already
+visible as a stream swaps into its settled row without another entrance; answers
+that were only shown in Hidden's plain-text status line reveal in the transcript
+in at most about 0.9 seconds. Initial history and paging never replay that reveal.
+Remove animations shows text immediately; TalkBack touch exploration also skips
+the settled-answer reveal. Following stays at the growing reply's end only until
+the reader drags away.
+
+`StreamingTextTest` covers the pure pacing, grapheme, Markdown, table-row and status rules;
+`ConversationDesignTest` covers streamed handover. The Robolectric
+`StreamingMotionScreenshotTest` drives the real screen with an explicitly frozen
+Compose clock at xxhdpi. Capture its Full and Hidden sequences with:
+
+```sh
+COMPANION_MOTION_CAPTURE_DIR="$PWD/.impeccable/review/motion" \
+  ./gradlew :app:testDebugUnitTest --tests '*StreamingMotionScreenshotTest'
+ffmpeg -framerate 20 -i .impeccable/review/motion/stream/frame-%03d.png \
+  -vf 'pad=ceil(iw/2)*2:ceil(ih/2)*2' -pix_fmt yuv420p \
+  ../.impeccable/review/motion/android-stream.mp4
+ffmpeg -framerate 20 -i .impeccable/review/motion/hidden-reveal/frame-%03d.png \
+  -vf 'pad=ceil(iw/2)*2:ceil(ih/2)*2' -pix_fmt yuv420p \
+  ../.impeccable/review/motion/android-hidden-reveal.mp4
+```
+
+These are isolated native Robolectric captures, not physical-device refresh-rate
+or touch-performance evidence. The normal suite keeps capture output disabled.
+The one-pixel padding accommodates odd native viewport dimensions for H.264
+without rescaling the xxhdpi captures.
+
 ## Installable threads preview
 
 ```sh

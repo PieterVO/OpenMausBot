@@ -29,24 +29,33 @@ import androidx.compose.ui.unit.dp
 import com.openmausbot.companion.R
 import com.openmausbot.companion.core.*
 import kotlinx.coroutines.delay
+import com.openmausbot.companion.core.StreamingText
 import kotlinx.coroutines.launch
 
 /** One block parser for settled replies, live replies and embedded tables. */
 @Composable
-fun MarkdownText(source: String, modifier: Modifier = Modifier, caret: Boolean = false, openLink: ((String) -> Unit)? = null) {
-    MarkdownBlocks(remember(source) { Markdown.blocks(source) }, modifier, caret, openLink)
+fun MarkdownText(source: String, modifier: Modifier = Modifier, caret: Boolean = false, openLink: ((String) -> Unit)? = null,
+    settling: Boolean = false, caretAlpha: Float = 1f) {
+    MarkdownBlocks(remember(source) { Markdown.blocks(source) }, modifier, caret, openLink, settling, caretAlpha)
 }
 
 @Composable
-internal fun MarkdownBlocks(blocks: List<MarkdownBlock>, modifier: Modifier = Modifier, caret: Boolean = false, openLink: ((String) -> Unit)? = null) {
-    CompositionLocalProvider(LocalLinkOpener provides openLink) {
+internal fun MarkdownBlocks(blocks: List<MarkdownBlock>, modifier: Modifier = Modifier, caret: Boolean = false, openLink: ((String) -> Unit)? = null,
+    settling: Boolean = false, caretAlpha: Float = 1f) {
+    CompositionLocalProvider(LocalLinkOpener provides openLink, LocalCaretAlpha provides caretAlpha) {
         Column(modifier, verticalArrangement = Arrangement.spacedBy(8.dp)) {
-            blocks.forEachIndexed { index, block -> MarkdownBlockView(block, caret && index == blocks.lastIndex) }
+            blocks.forEachIndexed { index, block ->
+                CompositionLocalProvider(LocalInkSettling provides (settling && index == blocks.lastIndex && block !is MarkdownBlock.Code && block !is MarkdownBlock.Table)) {
+                    MarkdownBlockView(block, caret && index == blocks.lastIndex)
+                }
+            }
         }
     }
 }
 
 private val LocalLinkOpener = compositionLocalOf<((String) -> Unit)?> { null }
+private val LocalInkSettling = compositionLocalOf { false }
+private val LocalCaretAlpha = compositionLocalOf { 1f }
 
 @Composable
 private fun MarkdownBlockView(block: MarkdownBlock, tail: Boolean) {
@@ -85,6 +94,7 @@ private fun MarkdownBlockView(block: MarkdownBlock, tail: Boolean) {
 @Composable
 private fun CodeBlock(block: MarkdownBlock.Code, tail: Boolean) {
     val clipboard = LocalClipboard.current
+    val caretAlpha = LocalCaretAlpha.current
     val scope = rememberCoroutineScope()
     val haptics = rememberHaptics()
     var copied by remember(block.text) { mutableStateOf(false) }
@@ -102,7 +112,7 @@ private fun CodeBlock(block: MarkdownBlock.Code, tail: Boolean) {
                 Text(stringResource(if (copied) R.string.mobile_copied_8e3df45a else R.string.mobile_copy_af74f7c5), color = chatTint.ink)
             }
         }
-        Text(buildAnnotatedString { append(block.text); appendCaret(tail, secondaryTint) },
+        Text(buildAnnotatedString { append(block.text); appendCaret(tail, secondaryTint, caretAlpha) },
             style = MaterialTheme.typography.bodySmall, fontFamily = FontFamily.Monospace,
             softWrap = false, modifier = Modifier.horizontalScroll(rememberScrollState()).padding(bottom = 10.dp))
     }
@@ -122,12 +132,16 @@ internal fun MarkdownInlineText(text: String, tail: Boolean, style: TextStyle, m
     val tint = chatTint
     val muted = secondaryTint
     val opener = LocalLinkOpener.current
+    val settling = LocalInkSettling.current
+    val caretAlpha = LocalCaretAlpha.current
+    val defaultInk = if (color == Color.Unspecified) MaterialTheme.colorScheme.onSurface else color
     val spans = remember(text) { InlineMarkdown.parse(text) }
+    val ink = remember(spans, settling) { if (settling) InkTail(InlineMarkdown.plain(spans)) else null }
     val density = LocalDensity.current
     val measurer = rememberTextMeasurer()
     val codeStyle = style.copy(fontFamily = FontFamily.Monospace, fontSize = style.fontSize * 0.94f,
         fontWeight = fontWeight ?: style.fontWeight, textDecoration = textDecoration ?: style.textDecoration)
-    val content = remember(spans, codeStyle, density, measurer, color, tint.inset, tint.ink) { spans.mapIndexedNotNull { index, span ->
+    val content = remember(spans, codeStyle, density, measurer, color, tint.inset, tint.ink, ink, defaultInk) { spans.mapIndexedNotNull { index, span ->
         if (InlineStyle.CODE !in span.styles) return@mapIndexedNotNull null
         var decoration = codeStyle.textDecoration
         if (InlineStyle.STRIKE in span.styles) decoration = (decoration ?: TextDecoration.None) + TextDecoration.LineThrough
@@ -139,11 +153,15 @@ internal fun MarkdownInlineText(text: String, tail: Boolean, style: TextStyle, m
         val width = with(density) { (measured.size.width + 6.dp.toPx()).toSp() }
         val height = with(density) { measured.size.height.toSp() }
         "code-$index" to InlineTextContent(Placeholder(width, height, PlaceholderVerticalAlign.TextCenter)) {
-            Text(span.text, style = code, color = if (accent) tint.ink else color, softWrap = false,
+            var spanStart = 0
+            for (previous in 0 until index) spanStart += spans[previous].text.length
+            val foreground = if (accent) tint.ink else defaultInk
+            Text(ink?.apply(AnnotatedString(span.text), foreground, spanStart) ?: AnnotatedString(span.text), style = code, color = foreground, softWrap = false,
                 modifier = Modifier.background(tint.inset, RoundedCornerShape(5.dp)).padding(horizontal = 3.dp))
         }
     }.toMap() }
-    val annotated = remember(spans, content, tail, muted, tint.ink, opener, color) { buildAnnotatedString {
+    val annotated = remember(spans, content, tail, muted, tint.ink, opener, color, ink, defaultInk, caretAlpha) {
+        val body = buildAnnotatedString {
         for ((index, span) in spans.withIndex()) {
             val spanStyle = SpanStyle(fontWeight = if (InlineStyle.BOLD in span.styles) FontWeight.Bold else null,
                 fontStyle = if (InlineStyle.ITALIC in span.styles) FontStyle.Italic else null,
@@ -158,11 +176,35 @@ internal fun MarkdownInlineText(text: String, tail: Boolean, style: TextStyle, m
             else if ("code-$index" in content) appendInlineContent("code-$index", span.text)
             else withStyle(spanStyle) { append(span.text) }
         }
-        appendCaret(tail, muted)
-    } }
-    Text(annotated, modifier, color = color, style = style, fontWeight = fontWeight, textDecoration = textDecoration, inlineContent = content)
+        }
+        buildAnnotatedString {
+            append(ink?.apply(body, defaultInk) ?: body)
+            appendCaret(tail, muted, caretAlpha)
+        }
+    }
+    Text(annotated, modifier.semantics { this[InkTailAlphas] = ink?.alphas ?: emptyList() },
+        color = color, style = style, fontWeight = fontWeight, textDecoration = textDecoration, inlineContent = content)
 }
 
-private fun AnnotatedString.Builder.appendCaret(tail: Boolean, muted: Color) {
-    if (tail) withStyle(SpanStyle(color = muted)) { append(" ▍") }
+private fun AnnotatedString.Builder.appendCaret(tail: Boolean, muted: Color, alpha: Float) {
+    if (tail) withStyle(SpanStyle(color = muted.copy(alpha = muted.alpha * alpha))) { append(" ▍") }
+}
+
+/** Fade the rendered graphemes, not Markdown markers; earlier blocks stay solid. */
+private class InkTail(text: String) {
+    private val ends = StreamingText.graphemeEnds(text)
+    private val first = (ends.size - 8).coerceAtLeast(0)
+    val alphas = List(ends.size - first) { index ->
+        if (ends.size - first == 1) 0.3f else 1f - 0.7f * index / (ends.size - first - 1)
+    }
+    fun apply(text: AnnotatedString, base: Color, offset: Int = 0): AnnotatedString = buildAnnotatedString {
+        append(text)
+        for (index in first until ends.size) {
+            val start = ((if (index == 0) 0 else ends[index - 1]) - offset).coerceAtLeast(0)
+            val end = (ends[index] - offset).coerceAtMost(text.length)
+            if (start >= end) continue
+            val color = text.spanStyles.lastOrNull { it.start <= start && it.end >= end && it.item.color != Color.Unspecified }?.item?.color ?: base
+            addStyle(SpanStyle(color = color.copy(alpha = color.alpha * alphas[index - first])), start, end)
+        }
+    }
 }

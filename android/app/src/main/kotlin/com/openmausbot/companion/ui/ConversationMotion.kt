@@ -13,6 +13,7 @@ import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalLayoutDirection
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.semantics.semantics
 import kotlinx.coroutines.currentCoroutineContext
 
 /** Track the old tail, not the list size: paging at the head never animates arrivals. */
@@ -22,16 +23,19 @@ internal class TranscriptArrivals {
     private val appended = mutableSetOf<String>()
     private var tail: String? = null
     private var tailChanged = false
-    fun update(ids: List<String>): Set<String> {
+    private var liveTextWasVisible = false
+    /** Called after composition: the next transcript update replaces this frame. */
+    fun recordLiveTextVisible(visible: Boolean) { liveTextWasVisible = visible }
+    fun update(ids: List<String>, botTextIds: Set<String> = emptySet()): Set<String> {
         val newTail = ids.lastOrNull()
         tailChanged = initialized && newTail != tail
         if (initialized) {
-            if (previous.isEmpty()) appended.addAll(ids)
+            if (previous.isEmpty()) appended.addAll(ids.filterNot { liveTextWasVisible && it in botTextIds })
             else {
                 val oldTail = tail?.let { ids.indexOf(it) } ?: -1
                 if (oldTail >= 0) for (index in oldTail + 1 until ids.size) {
                     val id = ids[index]
-                    if (id !in previous) appended.add(id)
+                    if (id !in previous && !(liveTextWasVisible && id in botTextIds)) appended.add(id)
                 }
             }
         }
@@ -57,15 +61,16 @@ internal fun motionEnabled(): Boolean {
 }
 
 @Composable
-internal fun ArrivalRow(id: String, appended: Boolean, mine: Boolean, content: @Composable () -> Unit) {
-    val progress = remember(id) { Animatable(if (appended) 0f else 1f) }
+internal fun ArrivalRow(id: String, appended: Boolean, mine: Boolean, revealText: Boolean = false, content: @Composable () -> Unit) {
+    val progress = remember(id) { Animatable(if (appended && !revealText) 0f else 1f) }
     val offset = with(LocalDensity.current) { (if (mine) 18.dp else 10.dp).toPx() }
     val anchor = if (physicalBubbleTail(if (mine) BubbleTail.TRAILING else BubbleTail.LEADING, LocalLayoutDirection.current) == BubbleTail.TRAILING) 1f else 0f
     LaunchedEffect(id) {
-        if ((currentCoroutineContext()[MotionDurationScale]?.scaleFactor ?: 1f) > 0f) progress.animateTo(1f, spring(dampingRatio = 0.82f, stiffness = 380f))
+        if (appended && !revealText && (currentCoroutineContext()[MotionDurationScale]?.scaleFactor ?: 1f) > 0f)
+            progress.animateTo(1f, spring(dampingRatio = 0.82f, stiffness = 380f))
         else progress.snapTo(1f)
     }
-    Box(Modifier.graphicsLayer {
+    Box(Modifier.semantics { this[MessageMotionAlpha] = progress.value }.graphicsLayer {
         val value = progress.value
         alpha = value
         translationY = offset * (1f - value)

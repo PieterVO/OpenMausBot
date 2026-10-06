@@ -45,4 +45,36 @@ class ConversationDesignTest {
         assertEquals(emptySet(), arrivals.update(listOf("older", "first")))
         assertTrue(!arrivals.consumeTailChange(), "Paging at the head must not reclaim the viewport")
     }
+    @Test fun `a visible live reply hands bot text over without another arrival`() {
+        val arrivals = TranscriptArrivals()
+        arrivals.update(listOf("ask"))
+        arrivals.recordLiveTextVisible(true)
+        assertEquals(setOf("tool", "user"), arrivals.update(
+            listOf("ask", "tool", "narration", "reply", "user"),
+            botTextIds = setOf("narration", "reply"),
+        ))
+        assertTrue(!arrivals.consume("reply"))
+        assertTrue(!arrivals.consume("narration"), "Live narration uses the same invisible handover")
+        assertTrue(arrivals.consume("tool"), "Work rows still use their normal arrivals")
+        assertTrue(arrivals.consume("user"))
+        assertTrue(arrivals.consumeTailChange(), "Handover still changes the tail for following")
+    }
+    @Test fun `hidden text and a working bubble do not count as visible streaming`() {
+        val arrivals = TranscriptArrivals()
+        arrivals.update(listOf("ask"))
+        arrivals.recordLiveTextVisible(false)
+        assertEquals(setOf("reply"), arrivals.update(listOf("ask", "reply"), botTextIds = setOf("reply")))
+        assertTrue(arrivals.consume("reply"), "An unseen answer should reveal from empty")
+    }
+    @Test fun `previous live visibility cannot replay history or leak between trackers`() {
+        val first = TranscriptArrivals()
+        first.recordLiveTextVisible(true)
+        assertEquals(emptySet(), first.update(listOf("history"), botTextIds = setOf("history")))
+        assertEquals(emptySet(), first.update(listOf("older", "history"), botTextIds = setOf("older", "history")))
+        first.recordLiveTextVisible(false)
+        assertEquals(setOf("later"), first.update(listOf("older", "history", "later"), botTextIds = setOf("later")))
+        val second = TranscriptArrivals()
+        second.update(listOf("ask"))
+        assertEquals(setOf("reply"), second.update(listOf("ask", "reply"), botTextIds = setOf("reply")))
+    }
 }
