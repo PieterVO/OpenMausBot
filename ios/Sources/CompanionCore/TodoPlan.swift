@@ -46,7 +46,62 @@ public struct TodoPlan: Hashable, Sendable {
         self.truncated = truncated
     }
 
+    /// Only a todo or plan tool can carry a plan. The bulk of a busy
+    /// transcript is shell, read and edit calls whose inputs run to kilobytes;
+    /// those are skipped by name, or by their input's first key for an engine
+    /// that titles its todo call in words, never parsed. A plan-bearing input
+    /// is parsed once: transcripts are folded again on every render, and the
+    /// same input yields the same plan.
     public static func parse(tool: ToolActivity) -> TodoPlan? {
+        guard let raw = tool.input, mayCarryPlan(tool, input: raw) else { return nil }
+        let key = "\(tool.name)\u{1}\(raw)" as NSString
+        if let cached = parseCache.object(forKey: key) { return cached.plan }
+        let plan = parseUncached(tool: tool)
+        parseCache.setObject(CachedPlan(plan), forKey: key, cost: raw.utf8.count)
+        return plan
+    }
+
+    static func mayCarryPlan(_ tool: ToolActivity, input: String) -> Bool {
+        let name = tool.name.lowercased()
+        if name.contains("todo") || name.contains("plan") { return true }
+        // The input is a JSON object preview; a list's key is its first key.
+        guard let first = firstKey(input) else { return false }
+        return first == "todos" || first == "plan" || first == "entries"
+    }
+
+    /// The first key of a JSON object, read off its bytes without parsing:
+    /// `{`, whitespace, then a quoted name of at most 32 bytes. Nil otherwise.
+    static func firstKey(_ input: String) -> String? {
+        var bytes = input.utf8.makeIterator()
+        var byte = bytes.next()
+        func skipSpace() { while let b = byte, b == 0x20 || b == 0x0A || b == 0x0D || b == 0x09 { byte = bytes.next() } }
+        skipSpace()
+        guard byte == UInt8(ascii: "{") else { return nil }
+        byte = bytes.next()
+        skipSpace()
+        guard byte == UInt8(ascii: "\"") else { return nil }
+        var key: [UInt8] = []
+        while let b = bytes.next() {
+            if b == UInt8(ascii: "\"") { return String(decoding: key, as: UTF8.self) }
+            guard key.count < 32 else { return nil }
+            key.append(b)
+        }
+        return nil
+    }
+
+    private final class CachedPlan {
+        let plan: TodoPlan?
+        init(_ plan: TodoPlan?) { self.plan = plan }
+    }
+
+    private static let parseCache: NSCache<NSString, CachedPlan> = {
+        let cache = NSCache<NSString, CachedPlan>()
+        cache.countLimit = 512
+        cache.totalCostLimit = 4 << 20
+        return cache
+    }()
+
+    private static func parseUncached(tool: ToolActivity) -> TodoPlan? {
         guard let input = planObject(tool.input) else { return nil }
         let array: [Any]
         let textKeys: [String]

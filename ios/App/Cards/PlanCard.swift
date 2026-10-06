@@ -97,7 +97,6 @@ private struct PlanItemRow: View {
     let tint: Color
     let checkColor: Color
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
-    @Environment(\.scenePhase) private var scenePhase
     @State private var checkProgress: CGFloat
     @State private var visible = false
 
@@ -158,14 +157,7 @@ private struct PlanItemRow: View {
                 }
                 .transition(reduceMotion ? .opacity : .scale(scale: 0.6).combined(with: .opacity))
         case .active:
-            TimelineView(.animation(minimumInterval: 1.0 / 30, paused: reduceMotion || scenePhase != .active)) { timeline in
-                Circle().stroke(tint.opacity(0.35), lineWidth: 1.5)
-                    .overlay {
-                        Circle().trim(from: 0, to: 0.25)
-                            .stroke(tint, style: StrokeStyle(lineWidth: 2, lineCap: .round))
-                            .rotationEffect(.degrees(reduceMotion ? -90 : timeline.date.timeIntervalSinceReferenceDate.truncatingRemainder(dividingBy: 1) * 360))
-                    }
-            }
+            PlanActiveRing(tint: tint)
         case .pending:
             Circle().stroke(.tertiary, lineWidth: 1.5)
         case .cancelled:
@@ -180,6 +172,29 @@ private struct PlanItemRow: View {
         case .pending: String(localized: "To do, \(item.text)")
         case .cancelled: String(localized: "Cancelled, \(item.text)")
         }
+    }
+}
+
+/// The in-progress item's ring: a quarter arc turning once a second, driven
+/// by Core Animation rather than rebuilt every frame on the main thread. A
+/// plan left mid-way in an old turn would otherwise keep a TimelineView
+/// running for as long as the chat is open. Still with Reduce Motion.
+private struct PlanActiveRing: View {
+    let tint: Color
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @State private var turning = false
+
+    var body: some View {
+        Circle().stroke(tint.opacity(0.35), lineWidth: 1.5)
+            .overlay {
+                Circle().trim(from: 0, to: 0.25)
+                    .stroke(tint, style: StrokeStyle(lineWidth: 2, lineCap: .round))
+                    .rotationEffect(.degrees(turning ? 270 : -90))
+                    .animation(turning ? .linear(duration: 1).repeatForever(autoreverses: false) : .default, value: turning)
+            }
+            .onAppear { turning = !reduceMotion }
+            .onDisappear { turning = false }
+            .onValueChange(of: reduceMotion) { turning = !$0 }
     }
 }
 

@@ -80,6 +80,7 @@ struct ChatView: View {
     @State private var renderedRowIDs: [String] = []
     /// The live reply's pacer and how each new reply arrives (see LiveReveal).
     @State private var liveReveal = LiveReveal()
+    @State private var transcriptMemo = TranscriptMemo()
     @State private var hasRenderedTranscript = false
     @State private var newBotMessagesBelow = false
     @State private var transcriptWidth: CGFloat = 360
@@ -155,10 +156,13 @@ struct ChatView: View {
     /// the transcript and shown as one grey status line above the composer.
     private var live: LiveNarration { liveNarration(messages, busy: current.busy, detail: detail) }
 
+    /// The fold is kept until its inputs change (TranscriptMemo): this body
+    /// runs on every keystroke and every caption of a call, and the composer
+    /// reads the live plan from the same rows.
     private var rows: [TranscriptRow] {
         let live = live
         let shown = live.hiddenIds.isEmpty ? messages : messages.filter { !live.hiddenIds.contains($0.id) }
-        return transcriptRows(shown, detail: detail, showSummaries: showWorkSummaries)
+        return transcriptMemo.rows(for: shown, detail: detail, showSummaries: showWorkSummaries)
     }
 
     /// The status line's words: the reply as it streams, else the newest
@@ -199,9 +203,10 @@ struct ChatView: View {
 
     private var livePlan: (id: String, plan: TodoPlan)? {
         guard current.busy else { return nil }
-        let afterUser = messages.dropFirst((messages.lastIndex { $0.role == .user } ?? -1) + 1)
+        let messages = messages
+        let afterUser = Set(messages.dropFirst((messages.lastIndex { $0.role == .user } ?? -1) + 1).map(\.id))
         for row in rows.reversed() {
-            if case let .plan(id, message, plan) = row, afterUser.contains(where: { $0.id == message.id }) {
+            if case let .plan(id, message, plan) = row, afterUser.contains(message.id) {
                 return plan.isFinished ? nil : (id, plan)
             }
         }
@@ -355,6 +360,10 @@ struct ChatView: View {
                                         pacer: liveReveal.streamPacer(initiallyShowing: answer.count > 40 ? answer.count : 0)
                                     )
                                         .id(Self.liveBubbleId)
+                                        // Gone without a reply claiming its pacer (a stopped turn,
+                                        // the chat switched to Hidden): nothing streams here any
+                                        // more, so nothing keeps the end pinned.
+                                        .onDisappear { liveReveal.endStream() }
                                 } else if detail == .hidden || session.state.reasoning[threadId]?.isEmpty != false {
                                     TypingIndicatorView(color: current.color)
                                         .matchedGeometryEffect(id: "live-bubble", in: liveBubbleNamespace, properties: reduceMotion ? [] : .frame)
@@ -2958,6 +2967,7 @@ struct StreamingBubble: View {
         }
         .onAppear { advance(to: text.count) }
         .onValueChange(of: text.count) { advance(to: $0) }
+        .onDisappear { pacer.stopBreathing() }
     }
 
     private func advance(to count: Int) {

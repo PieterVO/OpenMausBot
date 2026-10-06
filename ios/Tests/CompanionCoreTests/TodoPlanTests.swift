@@ -30,6 +30,17 @@ final class TodoPlanTests: XCTestCase {
         XCTAssertNil(TodoPlan.parse(tool: tool("write", #"{"items":[{"text":"Not a todo tool"}]}"#)))
     }
 
+    // The fold runs on every render; ordinary tool calls must not be parsed
+    // as plans just because their input mentions a list somewhere.
+    func testOnlyAPlanShapedInputIsReadAsAPlan() {
+        let pretty = "{\n  \"todos\" : [\n    { \"content\" : \"Read\", \"status\" : \"pending\" }\n  ]\n}"
+        XCTAssertNotNil(TodoPlan.parse(tool: tool("Update the list", pretty)))
+        let shell = #"{"command":"echo '{\"todos\":[{\"content\":\"x\"}]}'"}"#
+        XCTAssertNil(TodoPlan.parse(tool: tool("Bash", shell)))
+        XCTAssertEqual(TodoPlan.firstKey(" {\n \"plan\": []}"), "plan")
+        XCTAssertNil(TodoPlan.firstKey("[{\"todos\": []}]"))
+    }
+
     func testEveryStatusAliasNormalizesAndUnknownDefaultsPending() {
         let groups: [(TodoItem.Status, [String])] = [
             (.done, ["completed", "complete", "done", "finished"]),

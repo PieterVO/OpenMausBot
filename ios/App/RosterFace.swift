@@ -43,24 +43,28 @@ struct RosterFace<Face: View>: View {
     }
 }
 
-/// Only this small stroke redraws, not the avatar or its row. Off-screen
-/// work stops with the scene; Reduce Motion replaces the arc with a ring.
+/// Only this small stroke redraws, not the avatar or its row. The turn is a
+/// repeating Core Animation rotation rather than a per-frame TimelineView: a
+/// home list of working bots stays mounted under an open chat, and would
+/// otherwise rebuild every arc on the main thread 30 times a second. Reduce
+/// Motion replaces the arc with a ring.
 struct RosterWorkingArc: View {
     let color: Color
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
-    @Environment(\.scenePhase) private var scenePhase
+    @State private var turning = false
 
     var body: some View {
-        TimelineView(.animation(minimumInterval: 1.0 / 30.0, paused: reduceMotion || scenePhase != .active)) { timeline in
-            let phase = timeline.date.timeIntervalSinceReferenceDate.truncatingRemainder(dividingBy: 2.4) / 2.4
-            ZStack {
-                Circle().stroke(color.opacity(0.14), lineWidth: 1.5)
-                Circle()
-                    .trim(from: 0, to: reduceMotion ? 1 : 0.28)
-                    .stroke(color, style: StrokeStyle(lineWidth: 1.5, lineCap: .round))
-                    .rotationEffect(.degrees(reduceMotion ? 0 : phase * 360 - 90))
-            }
+        ZStack {
+            Circle().stroke(color.opacity(0.14), lineWidth: 1.5)
+            Circle()
+                .trim(from: 0, to: reduceMotion ? 1 : 0.28)
+                .stroke(color, style: StrokeStyle(lineWidth: 1.5, lineCap: .round))
+                .rotationEffect(.degrees(turning ? 270 : -90))
+                .animation(turning ? .linear(duration: 2.4).repeatForever(autoreverses: false) : .default, value: turning)
         }
+        .onAppear { turning = !reduceMotion }
+        .onDisappear { turning = false }
+        .onValueChange(of: reduceMotion) { turning = !$0 }
         .accessibilityHidden(true)
     }
 }

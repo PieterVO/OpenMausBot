@@ -49,23 +49,41 @@ enum BotTint {
         return result
     }
 
+    /// Every bubble, glyph and link asks for its bot's colours on every
+    /// render, and the ink search above is a loop of colour mixes. Each
+    /// role × bot colour is worked out once, for both appearances, and the
+    /// same `Color` is handed back each time, so SwiftUI also sees an
+    /// unchanged value and leaves the view alone.
+    private enum Role { case theirs, ink, glyphFill, wash, actionLabel }
+    private struct Key: Hashable { let role: Role; let name: String }
+    private static let lock = NSLock()
+    private static var colors: [Key: Color] = [:]
+
+    private static func cached(_ role: Role, _ name: String?, _ make: (_ dark: Bool) -> UIColor) -> Color {
+        let key = Key(role: role, name: name ?? "")
+        lock.lock()
+        defer { lock.unlock() }
+        if let color = colors[key] { return color }
+        let light = make(false), dark = make(true)
+        let color = Color(uiColor: UIColor { $0.userInterfaceStyle == .dark ? dark : light })
+        colors[key] = color
+        return color
+    }
+
     static func theirs(_ color: String?) -> Color {
-        Color(uiColor: UIColor { surface(color, dark: $0.userInterfaceStyle == .dark) })
+        cached(.theirs, color) { surface(color, dark: $0) }
     }
 
     static func ink(_ color: String?) -> Color {
-        Color(uiColor: UIColor { foreground(color, dark: $0.userInterfaceStyle == .dark) })
+        cached(.ink, color) { foreground(color, dark: $0) }
     }
 
     static func glyphFill(_ color: String?) -> Color {
-        Color(uiColor: UIColor { traits in
-            let dark = traits.userInterfaceStyle == .dark
-            return foreground(color, dark: dark).withAlphaComponent(dark ? 0.26 : 0.20)
-        })
+        cached(.glyphFill, color) { foreground(color, dark: $0).withAlphaComponent($0 ? 0.26 : 0.20) }
     }
 
     static func wash(_ color: String?) -> Color {
-        Color(uiColor: UIColor { mascot(color).withAlphaComponent($0.userInterfaceStyle == .dark ? 0.22 : 0.14) })
+        cached(.wash, color) { mascot(color).withAlphaComponent($0 ? 0.22 : 0.14) }
     }
 
     static let inset = Color(uiColor: UIColor {
@@ -82,10 +100,9 @@ enum BotTint {
     })
 
     static func actionLabel(_ color: String?) -> Color {
-        Color(uiColor: UIColor { traits in
-            let fill = foreground(color, dark: traits.userInterfaceStyle == .dark)
-            return contrast(fill, .white) >= 4.5 ? .white : .black
-        })
+        cached(.actionLabel, color) { dark in
+            contrast(foreground(color, dark: dark), .white) >= 4.5 ? .white : .black
+        }
     }
 }
 

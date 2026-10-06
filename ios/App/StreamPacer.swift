@@ -64,6 +64,15 @@ final class StreamPacer: ObservableObject {
         lastFrame = nil
     }
 
+    /// The streaming bubble left the screen. The caret goes with it, so the
+    /// display link stops as soon as the reveal (if any) has caught up,
+    /// instead of ticking for a caret nobody can see.
+    func stopBreathing() {
+        breathing = false
+        breath = 1
+        if shown >= target, fade == 0 { stop() }
+    }
+
     private func run() {
         guard link == nil else { return }
         let link = CADisplayLink(target: Ticker(self), selector: #selector(Ticker.tick(_:)))
@@ -250,5 +259,29 @@ struct ReplyText: View {
 
     private func advance(to count: Int) {
         pacer.update(target: count, breathing: false, animated: animates && !reduceMotion && !UIAccessibility.isVoiceOverRunning)
+    }
+}
+
+/// The transcript fold, kept until its inputs change. The chat's body runs
+/// on every keystroke and on every caption of a Live call; the fold walks
+/// every message (plans, runs, digests) and its result changes only with the
+/// messages, the activity detail and the summaries setting. Arrays from the
+/// store compare cheaply: unchanged messages share their storage.
+@MainActor
+final class TranscriptMemo {
+    private var messages: [Message]?
+    private var detail: ActivityDetail?
+    private var showSummaries = false
+    private var cached: [TranscriptRow] = []
+
+    func rows(for messages: [Message], detail: ActivityDetail, showSummaries: Bool) -> [TranscriptRow] {
+        if detail == self.detail, showSummaries == self.showSummaries, messages == self.messages {
+            return cached
+        }
+        self.messages = messages
+        self.detail = detail
+        self.showSummaries = showSummaries
+        cached = transcriptRows(messages, detail: detail, showSummaries: showSummaries)
+        return cached
     }
 }
