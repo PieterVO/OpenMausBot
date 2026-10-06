@@ -42,6 +42,17 @@ class TodoPlanTest {
         assertNull(parse("""{"plan":[{"title":"Codex requires step/content/text"}]}""", "update_plan"))
     }
 
+    // Transcripts are folded again as messages arrive; ordinary tool calls must
+    // not be parsed as plans just because their input mentions a list somewhere.
+    @Test
+    fun onlyAPlanShapedInputIsReadAsAPlan() {
+        val pretty = "{\n  \"todos\" : [\n    { \"content\" : \"Read\", \"status\" : \"pending\" }\n  ]\n}"
+        assertNotNull(parse(pretty, "Update the list"))
+        assertNull(parse("""{"command":"echo '{\"todos\":[{\"content\":\"x\"}]}'"}""", "Bash"))
+        assertEquals("plan", TodoPlan.firstKey(" {\n \"plan\": []}"))
+        assertNull(TodoPlan.firstKey("""[{"todos": []}]"""))
+    }
+
     @Test
     fun normalizesEveryStatusSpellingAndBooleanFallback() {
         val spellings = mapOf(

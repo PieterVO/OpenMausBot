@@ -37,7 +37,37 @@ data class TodoPlan(val items: List<TodoItem>, val truncated: Boolean = false) {
     val isFinished: Boolean get() = total > 0 && done == total
 
     companion object {
-        fun parse(tool: ToolActivity): TodoPlan? = tool.inputObject()?.let { parseSnapshot(tool, it) }
+        fun parse(tool: ToolActivity): TodoPlan? =
+            if (mayCarryPlan(tool)) tool.inputObject()?.let { parseSnapshot(tool, it) } else null
+
+        /**
+         * Only a todo, plan or task tool can carry a plan. The bulk of a busy
+         * transcript is shell, read and edit calls with kilobyte inputs; those
+         * are skipped by name, or by their input's first key for an engine that
+         * titles its todo call in words, and never parsed (iOS `TodoPlan.mayCarryPlan`).
+         */
+        internal fun mayCarryPlan(tool: ToolActivity): Boolean {
+            val name = tool.name
+            if (name.contains("todo", ignoreCase = true) || name.contains("plan", ignoreCase = true) ||
+                name.endsWith("TaskCreate", ignoreCase = true) || name.endsWith("TaskUpdate", ignoreCase = true)
+            ) return true
+            return firstKey(tool.input ?: return false) in PLAN_FIRST_KEYS
+        }
+
+        private val PLAN_FIRST_KEYS = setOf("todos", "plan", "entries")
+
+        /** The first key of a JSON object preview, read off its characters without parsing. */
+        internal fun firstKey(input: String): String? {
+            var index = 0
+            fun skipSpace() { while (index < input.length && input[index].isWhitespace()) index++ }
+            skipSpace()
+            if (index >= input.length || input[index] != '{') return null
+            index++
+            skipSpace()
+            if (index >= input.length || input[index] != '"') return null
+            val end = input.indexOf('"', index + 1).takeIf { it > 0 && it - index <= 33 } ?: return null
+            return input.substring(index + 1, end)
+        }
     }
 }
 
@@ -99,6 +129,7 @@ fun planStates(messages: List<Message>): Map<String, TodoPlan> {
     for (message in messages) {
         if (message.kind != Message.Kind.ACTIVITY) continue
         val tool = message.tool ?: continue
+        if (!TodoPlan.mayCarryPlan(tool)) continue
         val input = tool.inputObject() ?: continue
         val snapshot = parseSnapshot(tool, input)
         if (snapshot != null) {
