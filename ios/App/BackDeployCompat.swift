@@ -7,25 +7,41 @@
 import AVFoundation
 import SwiftUI
 
+// Every shim below is a `ViewModifier` rather than a `@ViewBuilder` function
+// that branches on `self`. A branch on `self` puts the whole view it modifies
+// into each branch's type, so a chain of k shims (a screen's `onValueChange`
+// calls) builds a type 2^k–3^k times the size of the view. Whole-module
+// optimisation substitutes those opaque types and then spent tens of minutes
+// walking them; a modifier branches on its fixed `content` placeholder, and
+// the chain stays linear.
 extension View {
     /// `onChange(of:_:)` with the iOS 17 two-value closure, back-ported.
     ///
     /// Call sites only ever read the new value, so the shim hands that over
     /// and nothing else. On 16 this is the old single-value `onChange`, which
     /// fires on exactly the same edges.
-    @ViewBuilder
     func onValueChange<V: Equatable>(
         of value: V,
         initial: Bool = false,
         perform action: @escaping (V) -> Void
     ) -> some View {
+        modifier(ValueChange(value: value, initial: initial, action: action))
+    }
+}
+
+private struct ValueChange<V: Equatable>: ViewModifier {
+    let value: V
+    let initial: Bool
+    let action: (V) -> Void
+
+    func body(content: Content) -> some View {
         if #available(iOS 17.0, *) {
-            onChange(of: value, initial: initial) { _, newValue in action(newValue) }
+            content.onChange(of: value, initial: initial) { _, newValue in action(newValue) }
         } else if initial {
-            onChange(of: value) { newValue in action(newValue) }
+            content.onChange(of: value) { newValue in action(newValue) }
                 .onAppear { action(value) }
         } else {
-            onChange(of: value) { newValue in action(newValue) }
+            content.onChange(of: value) { newValue in action(newValue) }
         }
     }
 }
@@ -121,16 +137,24 @@ extension View {
     ///
     /// Same contract: the haptic fires when `trigger` changes. Below 17 the
     /// generators are driven by hand, which is what the modifier does anyway.
-    @ViewBuilder
     func feedback<T: Equatable>(_ kind: FeedbackKind, trigger: T) -> some View {
+        modifier(Feedback(kind: kind, trigger: trigger))
+    }
+}
+
+private struct Feedback<T: Equatable>: ViewModifier {
+    let kind: FeedbackKind
+    let trigger: T
+
+    func body(content: Content) -> some View {
         if #available(iOS 17.0, *) {
             switch kind {
-            case .selection: sensoryFeedback(.selection, trigger: trigger)
-            case .warning: sensoryFeedback(.warning, trigger: trigger)
-            case .success: sensoryFeedback(.success, trigger: trigger)
+            case .selection: content.sensoryFeedback(.selection, trigger: trigger)
+            case .warning: content.sensoryFeedback(.warning, trigger: trigger)
+            case .success: content.sensoryFeedback(.success, trigger: trigger)
             }
         } else {
-            onValueChange(of: trigger) { _ in kind.play() }
+            content.onValueChange(of: trigger) { _ in kind.play() }
         }
     }
 }
@@ -141,12 +165,19 @@ extension View {
     /// It marks a List row as not selectable, which iOS 16 has no equivalent
     /// for. There the row stays selectable and the screen's own guards decide
     /// what a tap does, which is the pre-17 behaviour the app already had.
-    @ViewBuilder
     func rowSelectionDisabled(_ disabled: Bool = true) -> some View {
+        modifier(RowSelectionDisabled(disabled: disabled))
+    }
+}
+
+private struct RowSelectionDisabled: ViewModifier {
+    let disabled: Bool
+
+    func body(content: Content) -> some View {
         if #available(iOS 17.0, *) {
-            selectionDisabled(disabled)
+            content.selectionDisabled(disabled)
         } else {
-            self
+            content
         }
     }
 }
@@ -155,25 +186,38 @@ extension View {
     /// The sheet's material background and rounded corners are iOS 16.4.
     /// Below that the sheet keeps the system's own chrome, which is the same
     /// shape, just opaque.
-    @ViewBuilder
     func sheetChromeCompat() -> some View {
-        if #available(iOS 16.4, *) {
-            presentationBackground(.thinMaterial)
-                .presentationCornerRadius(28)
-        } else {
-            self
-        }
+        modifier(SheetChrome())
     }
 
     /// The repeating pulse on a symbol is iOS 17. Below that the symbol simply
     /// sits still; it marks activity that the surrounding view already states
     /// in words.
-    @ViewBuilder
     func pulseCompat(isActive: Bool) -> some View {
-        if #available(iOS 17.0, *) {
-            symbolEffect(.pulse, options: .repeating, isActive: isActive)
+        modifier(Pulse(isActive: isActive))
+    }
+}
+
+private struct SheetChrome: ViewModifier {
+    func body(content: Content) -> some View {
+        if #available(iOS 16.4, *) {
+            content
+                .presentationBackground(.thinMaterial)
+                .presentationCornerRadius(28)
         } else {
-            self
+            content
+        }
+    }
+}
+
+private struct Pulse: ViewModifier {
+    let isActive: Bool
+
+    func body(content: Content) -> some View {
+        if #available(iOS 17.0, *) {
+            content.symbolEffect(.pulse, options: .repeating, isActive: isActive)
+        } else {
+            content
         }
     }
 }
@@ -182,39 +226,52 @@ extension View {
     /// `defaultScrollAnchor(_:)` is iOS 17. Below that the scroll view starts
     /// at the top and the screens that need the bottom scroll there
     /// themselves once content lands.
-    @ViewBuilder
     func scrollAnchorCompat(_ anchor: UnitPoint) -> some View {
-        if #available(iOS 17.0, *) {
-            defaultScrollAnchor(anchor)
-        } else {
-            self
-        }
+        modifier(ScrollAnchor(anchor: anchor))
     }
 
     /// Runs `action` when the person starts dragging a scroll view.
     /// `onScrollPhaseChange` is iOS 18; below that this is a no-op, so
     /// callers must treat "never called" as "do not know".
-    @ViewBuilder
     func onUserScrollCompat(_ action: @escaping () -> Void) -> some View {
-        if #available(iOS 18.0, *) {
-            onScrollPhaseChange { _, phase in
-                if phase == .interacting { action() }
-            }
-        } else {
-            self
-        }
+        modifier(UserScroll(settled: false, action: action))
     }
 
     /// Runs `action` when a scroll the person started comes to rest.
     /// iOS 18 only, like `onUserScrollCompat`; below that it never fires.
-    @ViewBuilder
     func onUserScrollSettledCompat(_ action: @escaping () -> Void) -> some View {
+        modifier(UserScroll(settled: true, action: action))
+    }
+}
+
+private struct ScrollAnchor: ViewModifier {
+    let anchor: UnitPoint
+
+    func body(content: Content) -> some View {
+        if #available(iOS 17.0, *) {
+            content.defaultScrollAnchor(anchor)
+        } else {
+            content
+        }
+    }
+}
+
+private struct UserScroll: ViewModifier {
+    /// Fire when a drag comes to rest, rather than when it starts.
+    let settled: Bool
+    let action: () -> Void
+
+    func body(content: Content) -> some View {
         if #available(iOS 18.0, *) {
-            onScrollPhaseChange { old, new in
-                if new == .idle, old != .idle { action() }
+            content.onScrollPhaseChange { old, new in
+                if settled {
+                    if new == .idle, old != .idle { action() }
+                } else if new == .interacting {
+                    action()
+                }
             }
         } else {
-            self
+            content
         }
     }
 }
@@ -249,28 +306,40 @@ extension View {
 
     /// `scrollClipDisabled()` is iOS 17. Below it the scroll view clips its
     /// content to its bounds, which costs a shadow spilling past the edge.
-    @ViewBuilder
     func scrollClipDisabledCompat() -> some View {
-        if #available(iOS 17.0, *) {
-            scrollClipDisabled()
-        } else {
-            self
-        }
+        modifier(ScrollClipDisabled())
     }
 
     /// Hardware-keyboard Return handling, which is `onKeyPress` on iOS 17.
     /// There is no pre-17 equivalent for a SwiftUI text field, so on 16 a
     /// hardware Return just inserts a newline like the software one.
-    @ViewBuilder
     func onHardwareReturn(_ action: @escaping () -> Void) -> some View {
+        modifier(HardwareReturn(action: action))
+    }
+}
+
+private struct ScrollClipDisabled: ViewModifier {
+    func body(content: Content) -> some View {
         if #available(iOS 17.0, *) {
-            onKeyPress(.return, phases: .down) { press in
+            content.scrollClipDisabled()
+        } else {
+            content
+        }
+    }
+}
+
+private struct HardwareReturn: ViewModifier {
+    let action: () -> Void
+
+    func body(content: Content) -> some View {
+        if #available(iOS 17.0, *) {
+            content.onKeyPress(.return, phases: .down) { press in
                 if press.modifiers.contains(.shift) { return .ignored }
                 action()
                 return .handled
             }
         } else {
-            self
+            content
         }
     }
 }
