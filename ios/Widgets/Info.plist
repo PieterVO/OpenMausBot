@@ -25,7 +25,11 @@
 		<key>NSExtensionPointIdentifier</key>
 		<string>com.apple.widgetkit-extension</string>
 	</dict>
+	<key>OpenMausAppGroup</key>
+	<string>$(OPENMAUS_APP_GROUP)</string>
+	<key>OpenMausAppIdentifier</key>
+	<string>$(OPENMAUS_APP_ID)</string>
 	<key>OpenMausKeychainAccessGroup</key>
-	<string>$(AppIdentifierPrefix)group.com.openmausbot.shared</string>
+	<string>$(AppIdentifierPrefix)$(OPENMAUS_APP_GROUP)</string>
 </dict>
 </plist>

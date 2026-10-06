@@ -1,0 +1,21 @@
+// Who the app is signed as: its bundle identifier family and the App Group
+// the app and its extensions share. These are the project's own identifiers,
+// registered to the maintainer's Apple team.
+//
+// Anyone else signing a build (a personal device, another team's TestFlight)
+// needs identifiers their own team can register. Put them, with the team, in
+// an untracked Identity.local.xcconfig next to this file; it is gitignored,
+// so the defaults here never change:
+//
+//   OPENMAUS_APP_ID = com.example.mausbot
+//   OPENMAUS_APP_GROUP = group.com.example.mausbot
+//   DEVELOPMENT_TEAM = ABCDE12345
+//   CODE_SIGN_STYLE = Automatic
+//
+// Extensions derive theirs from OPENMAUS_APP_ID (.share, .widgets), and the
+// app reads the group back from Info.plist (OpenMausSharedConfiguration), so
+// these two lines are the whole switch.
+OPENMAUS_APP_ID = com.openmausbot.app
+OPENMAUS_APP_GROUP = group.com.openmausbot.shared
+
+#include? "Identity.local.xcconfig"

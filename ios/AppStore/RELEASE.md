@@ -5,7 +5,7 @@ The app is native Swift and uses XcodeGen; EAS commands do not apply.
 ## One-time Apple setup
 
 1. Enrol in the Apple Developer Program.
-2. Register the bundle IDs `com.openmausbot.app`, `com.openmausbot.app.widgets`, and `com.openmausbot.app.share` (or change them in `project.yml` before the first upload).
+2. Register the bundle IDs `com.openmausbot.app`, `com.openmausbot.app.widgets`, and `com.openmausbot.app.share` (or, for another team, set its own in an untracked `Config/Identity.local.xcconfig`; see `Config/Identity.xcconfig`).
 3. Register the App Group `group.com.openmausbot.shared`. Enable App Groups and Keychain Sharing for the app and Share extension identifiers, then add the group to both. Keep the app's legacy `$(AppIdentifierPrefix)com.openmausbot.app` Keychain group during upgrades so existing pairings can migrate safely.
 4. Create the matching app in App Store Connect with the name **OpenMaus Mobile**, primary category **Productivity**, and a unique SKU.
 5. Create or select Apple Distribution certificates and App Store provisioning profiles for the containing app and both extensions.
