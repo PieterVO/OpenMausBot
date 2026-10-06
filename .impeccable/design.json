@@ -1,0 +1,524 @@
+{
+  "schemaVersion": 2,
+  "generatedAt": "2026-10-06T01:31:00.980374Z",
+  "title": "Design System: OpenMausBot Phone Companions",
+  "extensions": {
+    "colorMeta": {
+      "mine": {
+        "role": "primary",
+        "displayName": "Deep Maus Blue",
+        "tonalRamp": [
+          "oklch(15.00% 0.17841 260.09)",
+          "oklch(26.43% 0.17841 260.09)",
+          "oklch(37.86% 0.17841 260.09)",
+          "oklch(49.29% 0.17841 260.09)",
+          "oklch(60.71% 0.17841 260.09)",
+          "oklch(72.14% 0.17841 260.09)",
+          "oklch(83.57% 0.17841 260.09)",
+          "oklch(95.00% 0.17841 260.09)"
+        ]
+      },
+      "mascot-green": {
+        "role": "secondary",
+        "displayName": "Contact Green",
+        "tonalRamp": [
+          "oklch(15.00% 0.14824 155.02)",
+          "oklch(26.43% 0.14824 155.02)",
+          "oklch(37.86% 0.14824 155.02)",
+          "oklch(49.29% 0.14824 155.02)",
+          "oklch(60.71% 0.14824 155.02)",
+          "oklch(72.14% 0.14824 155.02)",
+          "oklch(83.57% 0.14824 155.02)",
+          "oklch(95.00% 0.14824 155.02)"
+        ]
+      },
+      "mascot-blue": {
+        "role": "primary",
+        "displayName": "Contact Blue",
+        "tonalRamp": [
+          "oklch(15.00% 0.17187 257.93)",
+          "oklch(26.43% 0.17187 257.93)",
+          "oklch(37.86% 0.17187 257.93)",
+          "oklch(49.29% 0.17187 257.93)",
+          "oklch(60.71% 0.17187 257.93)",
+          "oklch(72.14% 0.17187 257.93)",
+          "oklch(83.57% 0.17187 257.93)",
+          "oklch(95.00% 0.17187 257.93)"
+        ]
+      },
+      "mascot-red": {
+        "role": "secondary",
+        "displayName": "Contact Red",
+        "tonalRamp": [
+          "oklch(15.00% 0.17752 21.34)",
+          "oklch(26.43% 0.17752 21.34)",
+          "oklch(37.86% 0.17752 21.34)",
+          "oklch(49.29% 0.17752 21.34)",
+          "oklch(60.71% 0.17752 21.34)",
+          "oklch(72.14% 0.17752 21.34)",
+          "oklch(83.57% 0.17752 21.34)",
+          "oklch(95.00% 0.17752 21.34)"
+        ]
+      },
+      "mascot-orange": {
+        "role": "secondary",
+        "displayName": "Contact Orange",
+        "tonalRamp": [
+          "oklch(15.00% 0.15198 56.55)",
+          "oklch(26.43% 0.15198 56.55)",
+          "oklch(37.86% 0.15198 56.55)",
+          "oklch(49.29% 0.15198 56.55)",
+          "oklch(60.71% 0.15198 56.55)",
+          "oklch(72.14% 0.15198 56.55)",
+          "oklch(83.57% 0.15198 56.55)",
+          "oklch(95.00% 0.15198 56.55)"
+        ]
+      },
+      "mascot-purple": {
+        "role": "secondary",
+        "displayName": "Contact Purple",
+        "tonalRamp": [
+          "oklch(15.00% 0.16933 297.32)",
+          "oklch(26.43% 0.16933 297.32)",
+          "oklch(37.86% 0.16933 297.32)",
+          "oklch(49.29% 0.16933 297.32)",
+          "oklch(60.71% 0.16933 297.32)",
+          "oklch(72.14% 0.16933 297.32)",
+          "oklch(83.57% 0.16933 297.32)",
+          "oklch(95.00% 0.16933 297.32)"
+        ]
+      },
+      "mascot-cyan": {
+        "role": "secondary",
+        "displayName": "Contact Cyan",
+        "tonalRamp": [
+          "oklch(15.00% 0.11896 219.19)",
+          "oklch(26.43% 0.11896 219.19)",
+          "oklch(37.86% 0.11896 219.19)",
+          "oklch(49.29% 0.11896 219.19)",
+          "oklch(60.71% 0.11896 219.19)",
+          "oklch(72.14% 0.11896 219.19)",
+          "oklch(83.57% 0.11896 219.19)",
+          "oklch(95.00% 0.11896 219.19)"
+        ]
+      },
+      "mascot-pink": {
+        "role": "secondary",
+        "displayName": "Contact Pink",
+        "tonalRamp": [
+          "oklch(15.00% 0.18032 356.49)",
+          "oklch(26.43% 0.18032 356.49)",
+          "oklch(37.86% 0.18032 356.49)",
+          "oklch(49.29% 0.18032 356.49)",
+          "oklch(60.71% 0.18032 356.49)",
+          "oklch(72.14% 0.18032 356.49)",
+          "oklch(83.57% 0.18032 356.49)",
+          "oklch(95.00% 0.18032 356.49)"
+        ]
+      },
+      "mascot-yellow": {
+        "role": "secondary",
+        "displayName": "Contact Yellow",
+        "tonalRamp": [
+          "oklch(15.00% 0.14335 85.43)",
+          "oklch(26.43% 0.14335 85.43)",
+          "oklch(37.86% 0.14335 85.43)",
+          "oklch(49.29% 0.14335 85.43)",
+          "oklch(60.71% 0.14335 85.43)",
+          "oklch(72.14% 0.14335 85.43)",
+          "oklch(83.57% 0.14335 85.43)",
+          "oklch(95.00% 0.14335 85.43)"
+        ]
+      },
+      "mascot-teal": {
+        "role": "secondary",
+        "displayName": "Contact Teal",
+        "tonalRamp": [
+          "oklch(15.00% 0.11577 181.39)",
+          "oklch(26.43% 0.11577 181.39)",
+          "oklch(37.86% 0.11577 181.39)",
+          "oklch(49.29% 0.11577 181.39)",
+          "oklch(60.71% 0.11577 181.39)",
+          "oklch(72.14% 0.11577 181.39)",
+          "oklch(83.57% 0.11577 181.39)",
+          "oklch(95.00% 0.11577 181.39)"
+        ]
+      },
+      "mascot-coral": {
+        "role": "secondary",
+        "displayName": "Contact Coral",
+        "tonalRamp": [
+          "oklch(15.00% 0.16623 31.22)",
+          "oklch(26.43% 0.16623 31.22)",
+          "oklch(37.86% 0.16623 31.22)",
+          "oklch(49.29% 0.16623 31.22)",
+          "oklch(60.71% 0.16623 31.22)",
+          "oklch(72.14% 0.16623 31.22)",
+          "oklch(83.57% 0.16623 31.22)",
+          "oklch(95.00% 0.16623 31.22)"
+        ]
+      },
+      "mascot-fallback": {
+        "role": "secondary",
+        "displayName": "Fallback Grey",
+        "tonalRamp": [
+          "oklch(15.00% 0.00735 286.19)",
+          "oklch(26.43% 0.00735 286.19)",
+          "oklch(37.86% 0.00735 286.19)",
+          "oklch(49.29% 0.00735 286.19)",
+          "oklch(60.71% 0.00735 286.19)",
+          "oklch(72.14% 0.00735 286.19)",
+          "oklch(83.57% 0.00735 286.19)",
+          "oklch(95.00% 0.00735 286.19)"
+        ]
+      },
+      "incoming-neutral-ios-light": {
+        "role": "neutral",
+        "displayName": "Incoming iOS Light Ground",
+        "tonalRamp": [
+          "oklch(15.00% 0.00399 286.32)",
+          "oklch(26.43% 0.00399 286.32)",
+          "oklch(37.86% 0.00399 286.32)",
+          "oklch(49.29% 0.00399 286.32)",
+          "oklch(60.71% 0.00399 286.32)",
+          "oklch(72.14% 0.00399 286.32)",
+          "oklch(83.57% 0.00399 286.32)",
+          "oklch(95.00% 0.00399 286.32)"
+        ]
+      },
+      "incoming-neutral-ios-dark": {
+        "role": "neutral",
+        "displayName": "Incoming iOS Dark Ground",
+        "tonalRamp": [
+          "oklch(15.00% 0.00566 285.97)",
+          "oklch(26.43% 0.00566 285.97)",
+          "oklch(37.86% 0.00566 285.97)",
+          "oklch(49.29% 0.00566 285.97)",
+          "oklch(60.71% 0.00566 285.97)",
+          "oklch(72.14% 0.00566 285.97)",
+          "oklch(83.57% 0.00566 285.97)",
+          "oklch(95.00% 0.00566 285.97)"
+        ]
+      },
+      "black": {
+        "role": "neutral",
+        "displayName": "Black Endpoint",
+        "tonalRamp": [
+          "oklch(15.00% 0.00000 0.00)",
+          "oklch(26.43% 0.00000 0.00)",
+          "oklch(37.86% 0.00000 0.00)",
+          "oklch(49.29% 0.00000 0.00)",
+          "oklch(60.71% 0.00000 0.00)",
+          "oklch(72.14% 0.00000 0.00)",
+          "oklch(83.57% 0.00000 0.00)",
+          "oklch(95.00% 0.00000 0.00)"
+        ]
+      },
+      "white": {
+        "role": "neutral",
+        "displayName": "White Endpoint",
+        "tonalRamp": [
+          "oklch(15.00% 0.00000 0.00)",
+          "oklch(26.43% 0.00000 0.00)",
+          "oklch(37.86% 0.00000 0.00)",
+          "oklch(49.29% 0.00000 0.00)",
+          "oklch(60.71% 0.00000 0.00)",
+          "oklch(72.14% 0.00000 0.00)",
+          "oklch(83.57% 0.00000 0.00)",
+          "oklch(95.00% 0.00000 0.00)"
+        ]
+      },
+      "inset-ios-light": {
+        "role": "neutral",
+        "displayName": "Light Inset Overlay",
+        "tonalRamp": [
+          "oklch(15.00% 0.00000 0.00 / 0.06)",
+          "oklch(26.43% 0.00000 0.00 / 0.06)",
+          "oklch(37.86% 0.00000 0.00 / 0.06)",
+          "oklch(49.29% 0.00000 0.00 / 0.06)",
+          "oklch(60.71% 0.00000 0.00 / 0.06)",
+          "oklch(72.14% 0.00000 0.00 / 0.06)",
+          "oklch(83.57% 0.00000 0.00 / 0.06)",
+          "oklch(95.00% 0.00000 0.00 / 0.06)"
+        ]
+      },
+      "inset-ios-dark": {
+        "role": "neutral",
+        "displayName": "Dark Inset Overlay",
+        "tonalRamp": [
+          "oklch(15.00% 0.00000 0.00 / 0.07)",
+          "oklch(26.43% 0.00000 0.00 / 0.07)",
+          "oklch(37.86% 0.00000 0.00 / 0.07)",
+          "oklch(49.29% 0.00000 0.00 / 0.07)",
+          "oklch(60.71% 0.00000 0.00 / 0.07)",
+          "oklch(72.14% 0.00000 0.00 / 0.07)",
+          "oklch(83.57% 0.00000 0.00 / 0.07)",
+          "oklch(95.00% 0.00000 0.00 / 0.07)"
+        ]
+      },
+      "warning-light": {
+        "role": "secondary",
+        "displayName": "Problem Orange — Light",
+        "tonalRamp": [
+          "oklch(15.00% 0.14513 50.78)",
+          "oklch(26.43% 0.14513 50.78)",
+          "oklch(37.86% 0.14513 50.78)",
+          "oklch(49.29% 0.14513 50.78)",
+          "oklch(60.71% 0.14513 50.78)",
+          "oklch(72.14% 0.14513 50.78)",
+          "oklch(83.57% 0.14513 50.78)",
+          "oklch(95.00% 0.14513 50.78)"
+        ]
+      },
+      "warning-dark-android": {
+        "role": "secondary",
+        "displayName": "Problem Orange — Android Dark",
+        "tonalRamp": [
+          "oklch(15.00% 0.17106 67.22)",
+          "oklch(26.43% 0.17106 67.22)",
+          "oklch(37.86% 0.17106 67.22)",
+          "oklch(49.29% 0.17106 67.22)",
+          "oklch(60.71% 0.17106 67.22)",
+          "oklch(72.14% 0.17106 67.22)",
+          "oklch(83.57% 0.17106 67.22)",
+          "oklch(95.00% 0.17106 67.22)"
+        ]
+      }
+    },
+    "typographyMeta": {
+      "title": {
+        "displayName": "Contact Title",
+        "purpose": "iOS .title2.bold() / Android headlineSmall bold for the poster contact name; native roles scale with the reader."
+      },
+      "headline": {
+        "displayName": "Reply Hierarchy",
+        "purpose": "iOS title3/headline/subheadline semibold and Android titleMedium/titleSmall/labelLarge semibold for Markdown headings."
+      },
+      "body": {
+        "displayName": "Conversation Body",
+        "purpose": "iOS .body / Android bodyLarge for the reading path; plan items use iOS .callout / Android bodyLarge."
+      },
+      "label": {
+        "displayName": "Quiet Detail",
+        "purpose": "Native caption/footnote and Android label/bodySmall roles for time, receipts, and secondary detail; not a frozen CSS font size."
+      },
+      "label-emphasis": {
+        "displayName": "Emphasized Label",
+        "purpose": "Semibold plan headers, active tasks, contact names, and primary option labels, retaining their native text roles."
+      },
+      "label-medium": {
+        "displayName": "Medium Label",
+        "purpose": "iOS caption.medium stat pills and subheadline.medium thinking; Android labelMedium stat counts and medium thinking label."
+      },
+      "mono": {
+        "displayName": "Code and Commands",
+        "purpose": "Native monospace for code and shell summaries; proportional prose retains monospaced digits only when it is measured data."
+      },
+      "composer-android": {
+        "displayName": "Android Draft",
+        "purpose": "The existing 17sp BasicTextField. The frontmatter px size is a portable preview export; native scaling remains in sp."
+      }
+    },
+    "shadows": [
+      {
+        "name": "ios-jump-to-latest",
+        "value": "SwiftUI .shadow(color: .black.opacity(0.12), radius: 8, y: 2)",
+        "purpose": "The regular-material jump-to-latest capsule; a native blur radius, not a guessed CSS blur diameter."
+      },
+      {
+        "name": "android-chrome-capsule",
+        "value": "Compose Modifier.shadow(3.dp, shape, clip = false)",
+        "purpose": "Opaque surfaceContainerHigh capsules and round buttons; retain the platform-rendered shadow."
+      },
+      {
+        "name": "android-chrome-sheet",
+        "value": "Compose Modifier.shadow(6.dp, shape, clip = false)",
+        "purpose": "Opaque rounded floating sheets and composer; retain the platform-rendered shadow."
+      }
+    ],
+    "motion": [
+      {
+        "name": "conversation-spring-ios",
+        "value": "spring(response: 0.38s, dampingFraction: 0.82)",
+        "purpose": "Appended-message settlement, plan progress, and reversible work disclosures."
+      },
+      {
+        "name": "conversation-spring-android",
+        "value": "spring(dampingRatio = 0.82f, stiffness = 380f)",
+        "purpose": "Compose arrival and plan progress; do not pretend its physical stiffness is a CSS easing curve."
+      },
+      {
+        "name": "message-arrival",
+        "value": "opacity 0→1; y 10→0 incoming / 18→0 outgoing; scale 0.97→1; tail-corner anchor",
+        "purpose": "Only newly appended rows after the first rendered history, never initial load or paging. Units are pt/dp."
+      },
+      {
+        "name": "reduced-motion-ios",
+        "value": "opacity/easeOut 200ms; no arrival translation or scale",
+        "purpose": "Reduced-motion alternative for the sampled conversation transitions."
+      },
+      {
+        "name": "removed-animations-android",
+        "value": "snap(); static active arcs and roster rings",
+        "purpose": "Respect MotionDurationScale zero; arrivals and plan changes settle instantly."
+      },
+      {
+        "name": "plan-check",
+        "value": "easeOut 280ms; iOS delay 120ms; done-marker scale 0.6→1",
+        "purpose": "Completion change on a visible plan; initialized completed history does not replay the check."
+      },
+      {
+        "name": "plan-active-arc",
+        "value": "quarter circle; 1000ms linear revolution",
+        "purpose": "The current plan item, static when animation is reduced/removed."
+      },
+      {
+        "name": "thinking-shimmer",
+        "value": "1600ms sweep",
+        "purpose": "A restrained moving ink highlight on the live thinking label; use a static label for reduced motion."
+      },
+      {
+        "name": "android-step-reveal",
+        "value": "30ms × min(index, 7) delay; 200ms opacity tween",
+        "purpose": "Stagger the expanded step trail with a bounded delay; snap with animations removed."
+      },
+      {
+        "name": "roster-working-arc",
+        "value": "2400ms revolution",
+        "purpose": "Slower identity-surrounding work motion; a full static ring when animation is disabled."
+      }
+    ]
+  },
+  "components": [
+    {
+      "name": "Send Button",
+      "kind": "button",
+      "refersTo": "button-send",
+      "description": "Deep-blue send disc (32 logical units) inside an Android 48dp target. The inline SVG copies the app’s authored send vector; browser interaction states are preview-only.",
+      "html": "<button class=\"ds-send-target\" aria-label=\"Send message\"><span class=\"ds-send-disc\"><svg class=\"\" viewBox=\"0 0 24 24\" aria-hidden=\"true\" focusable=\"false\"><path d=\"M3,3 L21,12 L3,21 L7,12 Z M7,12 L21,12\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"1.7\" stroke-linecap=\"round\" stroke-linejoin=\"round\"/></svg></span></button>",
+      "css": ".ds-send-target { width:48px; height:48px; display:grid; place-items:center; border:0; padding:0; border-radius:50%; background:transparent; cursor:pointer; } .ds-send-disc { width:32px; height:32px; display:grid; place-items:center; border-radius:50%; background:#2E6FDB; color:#FFFFFF; } .ds-send-disc svg { width:16px; height:16px; } .ds-send-target:hover:not(:disabled) .ds-send-disc { filter:brightness(0.94); } .ds-send-target:focus-visible { outline:2px solid #2E6FDB; outline-offset:2px; } .ds-send-target:active:not(:disabled) .ds-send-disc { filter:brightness(0.88); } .ds-send-target:disabled { cursor:default; } .ds-send-target:disabled .ds-send-disc { background:color-mix(in srgb, CanvasText 18%, transparent); color:GrayText; } .ds-send-target:dir(rtl) svg { transform:scaleX(-1); }"
+    },
+    {
+      "name": "Primary Approval",
+      "kind": "button",
+      "refersTo": "button-approval-primary",
+      "description": "The iOS blue-contact light-state approval option: resolved ink, white contrast-selected label, full-width capsule, and a 44pt minimum. Native option text comes from the actual approval.",
+      "html": "<button class=\"ds-approval-primary\">Allow</button>",
+      "css": ".ds-approval-primary { min-height:44px; width:100%; border:0; border-radius:9999px; background:rgb(41.25 95.25 172.5); color:#FFFFFF; font:600 1em system-ui, -apple-system, BlinkMacSystemFont, Roboto, sans-serif; cursor:pointer; } .ds-approval-primary:hover:not(:disabled) { filter:brightness(0.94); } .ds-approval-primary:focus-visible { outline:2px solid rgb(41.25 95.25 172.5); outline-offset:3px; } .ds-approval-primary:active:not(:disabled) { filter:brightness(0.88); } .ds-approval-primary:disabled { opacity:0.4; cursor:default; }"
+    },
+    {
+      "name": "Secondary Approval",
+      "kind": "button",
+      "refersTo": "button-approval-secondary",
+      "description": "The iOS light-state tonal refusal option. The relative CSS pill radius encodes a native Capsule; disabled/hover/focus browser styles are not extra native tokens.",
+      "html": "<button class=\"ds-approval-secondary\">Deny</button>",
+      "css": ".ds-approval-secondary { min-height:44px; width:100%; border:0; border-radius:9999px; background:rgba(0,0,0,0.06); color:CanvasText; font:600 1em system-ui, -apple-system, BlinkMacSystemFont, Roboto, sans-serif; cursor:pointer; } .ds-approval-secondary:hover:not(:disabled) { background:rgba(0,0,0,0.10); } .ds-approval-secondary:focus-visible { outline:2px solid rgb(41.25 95.25 172.5); outline-offset:3px; } .ds-approval-secondary:active:not(:disabled) { background:rgba(0,0,0,0.14); } .ds-approval-secondary:disabled { opacity:0.4; cursor:default; }"
+    },
+    {
+      "name": "Composer Field",
+      "kind": "input",
+      "refersTo": "composer-android",
+      "description": "Android’s scalable 17sp draft, one-to-five-line growth, blue caret, and fixed 24dp corners. Canvas stands in for the OS-owned chrome material in this browser preview; no glass/elevation value is fabricated.",
+      "html": "<div class=\"ds-composer\"><textarea class=\"ds-composer-field\" rows=\"1\" aria-label=\"Message\" placeholder=\"Message MausBot\"></textarea><button class=\"ds-composer-send\" aria-label=\"Send message\" disabled><span><svg class=\"\" viewBox=\"0 0 24 24\" aria-hidden=\"true\" focusable=\"false\"><path d=\"M3,3 L21,12 L3,21 L7,12 Z M7,12 L21,12\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"1.7\" stroke-linecap=\"round\" stroke-linejoin=\"round\"/></svg></span></button></div>",
+      "css": ".ds-composer { display:flex; align-items:flex-end; gap:6px; min-height:48px; border-radius:24px; background:Canvas; color:CanvasText; } .ds-composer-field { flex:1; min-width:0; min-height:1lh; max-height:5lh; field-sizing:content; resize:none; border:0; padding:11px 0 11px 14px; background:transparent; color:CanvasText; caret-color:#2E6FDB; font:400 17px system-ui, -apple-system, BlinkMacSystemFont, Roboto, sans-serif; } .ds-composer-field:focus { outline:none; } .ds-composer:focus-within { outline:2px solid #2E6FDB; outline-offset:2px; } .ds-composer-field::placeholder { color:GrayText; } .ds-composer-send { display:grid; place-items:center; width:48px; height:48px; padding:0; border:0; border-radius:50%; background:transparent; cursor:pointer; } .ds-composer-send span { display:grid; place-items:center; width:32px; height:32px; border-radius:50%; background:#2E6FDB; color:#FFFFFF; } .ds-composer-send svg { width:16px; height:16px; } .ds-composer-send:hover:not(:disabled) span { filter:brightness(0.94); } .ds-composer-send:active:not(:disabled) span { filter:brightness(0.88); } .ds-composer-send:focus-visible { outline:2px solid #2E6FDB; outline-offset:2px; } .ds-composer-send:disabled { cursor:default; } .ds-composer-send:disabled span { background:color-mix(in srgb, CanvasText 18%, transparent); color:GrayText; } .ds-composer-send:dir(rtl) svg { transform:scaleX(-1); }"
+    },
+    {
+      "name": "Conversation Navigation",
+      "kind": "nav",
+      "refersTo": "conversation-navigation",
+      "description": "A compact translation of native back, contact/thread, and computer furniture, not a new global navigation bar. Native mascot and OS material remain in the app; this self-contained snippet shows the control shapes on browser semantic Canvas.",
+      "html": "<nav class=\"ds-chat-nav\" aria-label=\"Conversation\"><button class=\"ds-chat-nav-back\" aria-label=\"Back\"><svg class=\"ds-chat-nav-back-icon\" viewBox=\"0 0 24 24\" aria-hidden=\"true\" focusable=\"false\"><path d=\"M4,12 L20,12 M14,6 L20,12 L14,18\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"1.7\" stroke-linecap=\"round\" stroke-linejoin=\"round\"/></svg></button><button class=\"ds-chat-nav-name\" aria-label=\"Switch thread\">MausBot<span class=\"ds-chat-nav-thread\">Threads</span></button><button class=\"ds-chat-nav-computer\" aria-label=\"Watch computer\"><svg viewBox=\"0 0 24 24\" aria-hidden=\"true\" focusable=\"false\"><path fill=\"currentColor\" d=\"M21,2H3C1.9,2 1,2.9 1,4v12c0,1.1 0.9,2 2,2h7l-2,3v1h8v-1l-2,-3h7c1.1,0 2,-0.9 2,-2V4C23,2.9 22.1,2 21,2zM21,16H3V4h18V16z\"/></svg></button></nav>",
+      "css": ".ds-chat-nav { display:flex; align-items:center; gap:8px; padding:4px 12px; color:CanvasText; } .ds-chat-nav button { min-height:48px; border:0; border-radius:9999px; background:Canvas; color:CanvasText; cursor:pointer; } .ds-chat-nav-back { min-width:48px; padding:0 14px; } .ds-chat-nav-back-icon { transform:rotate(180deg); } .ds-chat-nav-computer { width:48px; padding:0; } .ds-chat-nav svg { width:20px; height:20px; vertical-align:middle; } .ds-chat-nav-name { flex:1; padding:0 14px; font:600 15px system-ui, -apple-system, BlinkMacSystemFont, Roboto, sans-serif; } .ds-chat-nav-thread { margin-inline-start:6px; color:GrayText; font-weight:400; } .ds-chat-nav button:hover { background:color-mix(in srgb, CanvasText 6%, Canvas); } .ds-chat-nav button:focus-visible { outline:2px solid #2E6FDB; outline-offset:2px; } .ds-chat-nav button:active { background:color-mix(in srgb, CanvasText 10%, Canvas); } .ds-chat-nav:dir(rtl) .ds-chat-nav-back-icon { transform:rotate(180deg) scaleX(-1); }"
+    },
+    {
+      "name": "Work Stat Pill",
+      "kind": "chip",
+      "refersTo": "work-stat-pill",
+      "description": "A non-interactive receipt count: iOS blue-contact light ink over that ink at 20% opacity, tabular numerals, and native pill geometry. The sample count is illustrative, not product evidence.",
+      "html": "<span class=\"ds-work-stat\"><svg class=\"\" viewBox=\"0 0 24 24\" aria-hidden=\"true\" focusable=\"false\"><path d=\"M4,5 L6,5 M10,5 L21,5 M4,12 L6,12 M10,12 L21,12 M4,19 L6,19 M10,19 L21,19\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"1.7\" stroke-linecap=\"round\" stroke-linejoin=\"round\"/></svg><span>4 tool calls</span></span>",
+      "css": ".ds-work-stat { display:inline-flex; align-items:center; gap:6px; padding:7px 10px; border-radius:9999px; background:rgb(41.25 95.25 172.5 / 20%); color:rgb(41.25 95.25 172.5); font:500 0.875em system-ui, -apple-system, BlinkMacSystemFont, Roboto, sans-serif; font-variant-numeric:tabular-nums; } .ds-work-stat svg { width:14px; height:14px; }"
+    },
+    {
+      "name": "Outgoing Speech Bubble",
+      "kind": "custom",
+      "refersTo": "bubble-user",
+      "description": "A fixed illustrative native bubble sample, exporting the actual four-cubic tail at a 20pt radius. The app generates this contour from measured text bounds; this SVG preview does not redefine responsive bubble geometry.",
+      "html": "<div class=\"ds-outgoing-bubble\"><svg viewBox=\"0 0 280 60\" aria-hidden=\"true\" focusable=\"false\"><path d=\"M20,0 H260 A20,20 0 0 1 280,20 L280,40 C280.0000,47.5363 275.6425,53.1285 272.5698,55.7542 C272.5698,55.7542 270.0272,57.4860 269.7207,59.2737 C269.0503,63.1844 272.6801,65.5307 271.6745,66.7039 C270.8701,67.6425 263.0965,61.8903 259.2179,60.0000 L20,60 A20,20 0 0 1 0,40 V20 A20,20 0 0 1 20,0 Z\"/></svg><span>Could you take a look?</span></div>",
+      "css": ".ds-outgoing-bubble { position:relative; width:280px; max-width:100%; height:60px; margin-bottom:7.6px; color:#FFFFFF; font:400 1em system-ui, -apple-system, BlinkMacSystemFont, Roboto, sans-serif; } .ds-outgoing-bubble svg { position:absolute; inset:0; width:100%; height:100%; overflow:visible; fill:#2E6FDB; } .ds-outgoing-bubble span { position:relative; display:block; padding:9px 14px; } .ds-outgoing-bubble:dir(rtl) svg { transform:scaleX(-1); }"
+    },
+    {
+      "name": "Live Plan Card",
+      "kind": "card",
+      "refersTo": "plan-card",
+      "description": "The built signature: flat iOS blue-contact light surface, 4pt progress track, 20pt status circles, muted completed items, and a 1s active arc. All five task labels/counts are illustrative; native updates animate only when state changes.",
+      "html": "<article class=\"ds-plan\" aria-label=\"Plan, 2 of 5 done\"><header><svg class=\"\" viewBox=\"0 0 24 24\" aria-hidden=\"true\" focusable=\"false\"><path d=\"M4,5 L6,5 M10,5 L21,5 M4,12 L6,12 M10,12 L21,12 M4,19 L6,19 M10,19 L21,19\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"1.7\" stroke-linecap=\"round\" stroke-linejoin=\"round\"/></svg><strong>Plan</strong><span>2 of 5</span></header><div class=\"ds-plan-progress\" role=\"progressbar\" aria-valuemin=\"0\" aria-valuemax=\"5\" aria-valuenow=\"2\"><span></span></div><ul><li class=\"ds-plan-item ds-plan-item--done\" aria-label=\"Done, Read the request\"><span class=\"ds-plan-marker\"><svg class=\"\" viewBox=\"0 0 24 24\" aria-hidden=\"true\" focusable=\"false\"><path d=\"M4,12 L9,17 L20,6\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"1.7\" stroke-linecap=\"round\" stroke-linejoin=\"round\"/></svg></span><span>Read the request</span></li><li class=\"ds-plan-item ds-plan-item--done\" aria-label=\"Done, Review the code\"><span class=\"ds-plan-marker\"><svg class=\"\" viewBox=\"0 0 24 24\" aria-hidden=\"true\" focusable=\"false\"><path d=\"M4,12 L9,17 L20,6\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"1.7\" stroke-linecap=\"round\" stroke-linejoin=\"round\"/></svg></span><span>Review the code</span></li><li class=\"ds-plan-item ds-plan-item--active\" aria-label=\"In progress, Write the tests\"><span class=\"ds-plan-marker\"><svg viewBox=\"0 0 20 20\" aria-hidden=\"true\" focusable=\"false\"><circle cx=\"10\" cy=\"10\" r=\"8.5\"/><path d=\"M10,1.5 A8.5,8.5 0 0 1 18.5,10\"/></svg></span><span>Write the tests</span></li><li class=\"ds-plan-item ds-plan-item--pending\" aria-label=\"To do, Run the checks\"><span class=\"ds-plan-marker\"></span><span>Run the checks</span></li><li class=\"ds-plan-item ds-plan-item--pending\" aria-label=\"To do, Share the result\"><span class=\"ds-plan-marker\"></span><span>Share the result</span></li></ul></article>",
+      "css": ".ds-plan { padding:14px; border-radius:20px; background:rgb(219.65 227.57 241.57); color:#000000; font:400 1em system-ui, -apple-system, BlinkMacSystemFont, Roboto, sans-serif; } .ds-plan header { display:flex; align-items:center; gap:8px; margin-bottom:12px; } .ds-plan header svg { width:19px; height:19px; color:rgb(41.25 95.25 172.5); } .ds-plan header strong { font-weight:600; } .ds-plan header>span { margin-inline-start:auto; color:GrayText; font-variant-numeric:tabular-nums; } .ds-plan-progress { height:4px; margin-bottom:12px; border-radius:9999px; background:rgba(0,0,0,0.06); overflow:hidden; } .ds-plan-progress>span { display:block; width:40%; height:100%; border-radius:9999px; background:rgb(41.25 95.25 172.5); } .ds-plan ul { display:flex; flex-direction:column; gap:10px; margin:0; padding:0; list-style:none; } .ds-plan-item { display:flex; align-items:flex-start; gap:10px; } .ds-plan-marker { flex:none; width:20px; height:20px; margin-top:2px; border-radius:50%; } .ds-plan-item--done { color:GrayText; } .ds-plan-item--done>span:last-child { text-decoration:line-through; } .ds-plan-item--done .ds-plan-marker { display:grid; place-items:center; background:rgb(41.25 95.25 172.5); color:#FFFFFF; } .ds-plan-item--done svg { width:13px; height:13px; } .ds-plan-item--active { font-weight:600; } .ds-plan-item--active svg { width:20px; height:20px; fill:none; stroke:rgb(41.25 95.25 172.5); stroke-width:1.5; } .ds-plan-item--active circle { opacity:0.35; } .ds-plan-item--active path { stroke-width:2; stroke-linecap:round; transform-origin:10px 10px; animation:ds-plan-arc 1s linear infinite; } .ds-plan-item--pending .ds-plan-marker { border:1.5px solid GrayText; width:17px; height:17px; } @keyframes ds-plan-arc { to { transform:rotate(360deg); } } @media(prefers-reduced-motion:reduce) { .ds-plan-item--active path { animation:none; } }"
+    },
+    {
+      "name": "Reduced Step Run",
+      "kind": "custom",
+      "refersTo": "step-badge",
+      "description": "A browser-native disclosure of the reduced-run pattern: up to three overlapping 22pt badges and a connected expanded trail. App vector paths are inlined; the three example steps are illustrative.",
+      "html": "<details class=\"ds-step-run\"><summary><span class=\"ds-step-run-stack\"><span class=\"ds-step-run-badge\"><svg class=\"\" viewBox=\"0 0 24 24\" aria-hidden=\"true\" focusable=\"false\"><path d=\"M7,3 L15,3 L19,7 L19,21 L5,21 L5,3 Z M14,3 L14,8 L19,8 M8,12 L16,12 M8,16 L16,16\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"1.7\" stroke-linecap=\"round\" stroke-linejoin=\"round\"/></svg></span><span class=\"ds-step-run-badge\"><svg class=\"\" viewBox=\"0 0 24 24\" aria-hidden=\"true\" focusable=\"false\"><path d=\"M4,5 L20,5 L20,19 L4,19 Z M7,9 L10,12 L7,15 M13,15 L17,15\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"1.7\" stroke-linecap=\"round\" stroke-linejoin=\"round\"/></svg></span><span class=\"ds-step-run-badge\"><svg class=\"\" viewBox=\"0 0 24 24\" aria-hidden=\"true\" focusable=\"false\"><path d=\"M4,5 L6,5 M10,5 L21,5 M4,12 L6,12 M10,12 L21,12 M4,19 L6,19 M10,19 L21,19\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"1.7\" stroke-linecap=\"round\" stroke-linejoin=\"round\"/></svg></span></span><span>Ran 3 steps</span><svg class=\"ds-step-run-chevron\" viewBox=\"0 0 24 24\" aria-hidden=\"true\" focusable=\"false\"><path d=\"M4,12 L20,12 M14,6 L20,12 L14,18\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"1.7\" stroke-linecap=\"round\" stroke-linejoin=\"round\"/></svg></summary><div class=\"ds-step-run-trail\"><div class=\"ds-step-run-item\"><span class=\"ds-step-run-badge\"><svg class=\"\" viewBox=\"0 0 24 24\" aria-hidden=\"true\" focusable=\"false\"><path d=\"M7,3 L15,3 L19,7 L19,21 L5,21 L5,3 Z M14,3 L14,8 L19,8 M8,12 L16,12 M8,16 L16,16\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"1.7\" stroke-linecap=\"round\" stroke-linejoin=\"round\"/></svg></span><span>Read a file<small class=\"ds-step-run-summary\">Conversation styles</small></span></div><div class=\"ds-step-run-item\"><span class=\"ds-step-run-badge\"><svg class=\"\" viewBox=\"0 0 24 24\" aria-hidden=\"true\" focusable=\"false\"><path d=\"M4,5 L20,5 L20,19 L4,19 Z M7,9 L10,12 L7,15 M13,15 L17,15\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"1.7\" stroke-linecap=\"round\" stroke-linejoin=\"round\"/></svg></span><span>Run a command<small class=\"ds-step-run-command\">swift test</small></span></div><div class=\"ds-step-run-item\"><span class=\"ds-step-run-badge\"><svg class=\"\" viewBox=\"0 0 24 24\" aria-hidden=\"true\" focusable=\"false\"><path d=\"M4,5 L6,5 M10,5 L21,5 M4,12 L6,12 M10,12 L21,12 M4,19 L6,19 M10,19 L21,19\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"1.7\" stroke-linecap=\"round\" stroke-linejoin=\"round\"/></svg></span><span>Update the plan<small class=\"ds-step-run-summary\">Review the next task</small></span></div></div></details>",
+      "css": ".ds-step-run { color:CanvasText; font:400 1em system-ui, -apple-system, BlinkMacSystemFont, Roboto, sans-serif; } .ds-step-run summary { display:flex; align-items:center; gap:8px; min-height:44px; cursor:pointer; list-style:none; color:GrayText; } .ds-step-run summary::-webkit-details-marker { display:none; } .ds-step-run-stack { display:flex; padding-inline-end:6px; } .ds-step-run-badge { display:grid; place-items:center; flex:none; width:22px; height:22px; border-radius:50%; background:rgb(41.25 95.25 172.5 / 20%); color:rgb(41.25 95.25 172.5); } .ds-step-run-stack .ds-step-run-badge+.ds-step-run-badge { margin-inline-start:-6px; outline:1.5px solid Canvas; } .ds-step-run-badge svg { width:12px; height:12px; } .ds-step-run-chevron { width:16px; height:16px; margin-inline-start:auto; transform:rotate(90deg); } .ds-step-run[open] .ds-step-run-chevron { transform:rotate(-90deg); } .ds-step-run-trail { position:relative; padding-block:5px; } .ds-step-run-trail:before { content:\"\"; position:absolute; inset-inline-start:10.5px; top:16px; bottom:16px; width:1px; background:color-mix(in srgb, CanvasText 20%, transparent); } .ds-step-run-item { position:relative; display:flex; align-items:flex-start; gap:10px; padding-block:5px; } .ds-step-run-item small { display:block; margin-top:3px; color:GrayText; font-size:0.875em; } .ds-step-run-command { font-family:ui-monospace,SFMono-Regular,monospace; } .ds-step-run summary:hover { color:rgb(41.25 95.25 172.5); } .ds-step-run summary:focus-visible { outline:2px solid rgb(41.25 95.25 172.5); outline-offset:2px; border-radius:12px; } .ds-step-run summary:active { opacity:0.8; }"
+    },
+    {
+      "name": "Digest Disclosure",
+      "kind": "custom",
+      "refersTo": "digest-disclosure",
+      "description": "An unboxed work-summary control, using iOS blue-contact light ink and a 44pt target. The illustrated count/duration is not product evidence; the real action opens a native digest sheet rather than an inline log.",
+      "html": "<button class=\"ds-digest\"><svg class=\"\" viewBox=\"0 0 24 24\" aria-hidden=\"true\" focusable=\"false\"><path d=\"M4,5 L6,5 M10,5 L21,5 M4,12 L6,12 M10,12 L21,12 M4,19 L6,19 M10,19 L21,19\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"1.7\" stroke-linecap=\"round\" stroke-linejoin=\"round\"/></svg><span>Worked 40s · 3 tools</span><svg class=\"ds-digest-chevron\" viewBox=\"0 0 24 24\" aria-hidden=\"true\" focusable=\"false\"><path d=\"M4,12 L20,12 M14,6 L20,12 L14,18\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"1.7\" stroke-linecap=\"round\" stroke-linejoin=\"round\"/></svg></button>",
+      "css": ".ds-digest { display:flex; align-items:center; gap:6px; min-height:44px; padding:0; border:0; background:transparent; color:GrayText; font:400 0.875em system-ui, -apple-system, BlinkMacSystemFont, Roboto, sans-serif; font-variant-numeric:tabular-nums; text-align:start; cursor:pointer; } .ds-digest svg { flex:none; width:14px; height:14px; color:rgb(41.25 95.25 172.5); } .ds-digest .ds-digest-chevron { width:12px; height:12px; color:GrayText; } .ds-digest:hover { color:rgb(41.25 95.25 172.5); } .ds-digest:focus-visible { outline:2px solid rgb(41.25 95.25 172.5); outline-offset:3px; border-radius:5px; } .ds-digest:active { opacity:0.8; } .ds-digest:dir(rtl) .ds-digest-chevron { transform:scaleX(-1); }"
+    }
+  ],
+  "narrative": {
+    "northStar": "The Bot's Contact Poster",
+    "overview": "A conversation belongs to the contact, not to an agent console. The mascot and its colour establish recognition; familiar speech bubbles and native system type carry the words. Deep Maus blue distinguishes the person's messages. The bot replies on a soft contact-coloured surface, with a contrast-resolved ink for links, checks, and progress. The result is personal, cozy, and familiar without dressing the transcript as a tool log.\n\nDensity is intentionally uneven: messages are closely grouped, separate turns have air, and work details live in quieter rows or deliberate disclosures. The live plan is the signature object: it stays in the reading lane while its progress changes. Depth belongs to floating chrome, not to every piece of conversation. iOS keeps system glass; Android uses opaque elevated Material surfaces rather than imitating that glass.",
+    "keyCharacteristics": [
+      "Contact identity through the existing mascot and per-bot colour, including the actual speaker in rooms.",
+      "Solid, rounded speech bubbles with one soft tail at the end of a run.",
+      "Semantic native type and surfaces, with distinct iOS and Android material implementations.",
+      "A shared conversation-card family, restrained work receipts, and progress with readable numbers.",
+      "State-driven motion with reduced-motion alternatives, rather than entrances on loaded history."
+    ],
+    "rules": [
+      {
+        "name": "The Contact Owns the Ink Rule",
+        "body": "Resolve the bubble and its ink from the same speaker colour. Raw mascot colour identifies a contact; contrast-resolved ink carries links, step glyphs, checks, and progress.",
+        "section": "colors"
+      },
+      {
+        "name": "The Native Neutral Rule",
+        "body": "Preserve the platform's actual neutral and contrast policy instead of forcing identical light/dark swatches across iOS and Android.",
+        "section": "colors"
+      },
+      {
+        "name": "The Numbers Stay Still Rule",
+        "body": "Use monospaced digits/tabular-number features for progress and measured data, while keeping prose in the system proportional face.",
+        "section": "typography"
+      },
+      {
+        "name": "The Float the Furniture Rule",
+        "body": "Reserve glass or elevation for floating navigation, composer, and transient controls; conversation bubbles and plan cards remain solid and flat.",
+        "section": "elevation"
+      }
+    ],
+    "dos": [
+      "**Do** resolve each reply's surface and ink from its speaker, keeping room chrome distinct from room speakers.",
+      "**Do** preserve the platform-specific tint computation, semantic text roles, all Android skins, and light/dark label selection.",
+      "**Do** keep one authored tail at the end of a text run and retain its drop, mirrored layout, and shared card family.",
+      "**Do** use tabular numerals for progress and measured data, and reserve monospace for actual code/commands.",
+      "**Do** keep work disclosures tap-accessible and retain state labels/icons alongside colour.",
+      "**Do** preserve native touch targets, text scaling, Back, selection, screen-reader labels, and reduced-motion alternatives.",
+      "**Do** animate live state changes and appended messages without replaying loaded or paginated history."
+    ],
+    "donts": [
+      "**Don't** use raw mascot orange for small problem text on a light transcript or assume white labels/checks work on every dark-mode ink fill.",
+      "**Don't** flatten iOS glass and Android opaque elevated chrome into one faux-glass implementation.",
+      "**Don't** give every bubble/card a shadow, a glow halo, a thick coloured side border, or terminal-style log chrome.",
+      "**Don't** substitute generic avatars, emoji/glyph icons, or triangular pointers for the existing mascot, native icon system, and authored bubble tail.",
+      "**Don't** turn a growing composer into a tall capsule or shrink table text to avoid horizontal scrolling.",
+      "**Don't** promote illustrative browser previews, synthesized tonal ramps, or values from the provisional build spec into new native tokens."
+    ]
+  }
+}
