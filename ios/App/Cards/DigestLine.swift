@@ -19,7 +19,7 @@ struct DigestLine: View {
                 HStack(spacing: 6) {
                     Image(systemName: problem ? "exclamationmark.triangle.fill" : "checklist")
                         .font(.system(size: 14, weight: .medium))
-                        .foregroundStyle(problem ? Color.orange : BotTint.ink(message.from?.color ?? color))
+                        .foregroundStyle(problem ? BotTint.warning : BotTint.ink(message.from?.color ?? color))
                     line(presentation.slimLine, problem: problem)
                         .font(.footnote).monospacedDigit()
                         .multilineTextAlignment(.leading)
@@ -43,7 +43,7 @@ struct DigestLine: View {
     private func line(_ value: String, problem: Bool) -> Text {
         guard problem else { return Text(verbatim: value).foregroundColor(.secondary) }
         let parts = value.components(separatedBy: " · ")
-        let first = Text(verbatim: parts.first ?? value).foregroundColor(.orange)
+        let first = Text(verbatim: parts.first ?? value).foregroundColor(BotTint.warning)
         guard parts.count > 1 else { return first }
         return first + Text(verbatim: " · " + parts.dropFirst().joined(separator: " · ")).foregroundColor(.secondary)
     }

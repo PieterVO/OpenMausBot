@@ -16,6 +16,7 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.luminance
 import androidx.compose.ui.platform.ClipEntry
 import androidx.compose.ui.platform.LocalClipboard
 import androidx.compose.ui.platform.testTag
@@ -36,11 +37,14 @@ internal fun TurnDigestChip(message: Message, botName: String = "Bot", color: St
     val presentation = remember(message) { DigestPresentation.from(message) }
     var open by remember(message.id) { mutableStateOf(false) }
     val tint = chatTint
+    // Problem text sits on the plain transcript ground, where mascot orange is
+    // ~2.5:1 in light: a deeper orange there (5:1 on white), system orange in dark.
+    val warning = if (MaterialTheme.colorScheme.background.luminance() < 0.5f) Color(0xFFFF9F0A) else Color(0xFFB35400)
     val line = if (showTitle) localizedMobileCopy("What I did") else localizedDigestLine(presentation)
     val label = androidx.compose.ui.text.buildAnnotatedString {
         if (presentation.hasProblem && !showTitle) {
             val end = line.indexOf(" · ").takeIf { it >= 0 } ?: line.length
-            pushStyle(androidx.compose.ui.text.SpanStyle(color = Color(MausPalette.argb("orange"))))
+            pushStyle(androidx.compose.ui.text.SpanStyle(color = warning))
             append(line.substring(0, end))
             pop()
             append(line.substring(end))
@@ -48,7 +52,7 @@ internal fun TurnDigestChip(message: Message, botName: String = "Bot", color: St
     }
     Row(Modifier.testTag("digest-line-${message.id}").heightIn(min = 48.dp).clickable(role = Role.Button) { open = true },
         verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-        if (presentation.hasProblem) Icon(Icons.Filled.Warning, null, tint = Color(MausPalette.argb("orange")), modifier = Modifier.size(14.dp))
+        if (presentation.hasProblem) Icon(Icons.Filled.Warning, null, tint = warning, modifier = Modifier.size(14.dp))
         else ToolGlyph(ToolCategory.PLAN, tint.ink, Modifier.size(14.dp))
         Text(label, style = MaterialTheme.typography.bodySmall, color = secondaryTint, modifier = Modifier.weight(1f, fill = false))
         Icon(Icons.AutoMirrored.Filled.KeyboardArrowRight, null, tint = secondaryTint, modifier = Modifier.size(14.dp))

@@ -143,7 +143,7 @@ struct MarkdownText: View {
                 if checked {
                     Image(systemName: "checkmark")
                         .font(.system(size: 9, weight: .bold))
-                        .foregroundStyle(.white)
+                        .foregroundStyle(BotTint.actionLabel(color ?? botTintColor))
                 }
             }
             .frame(width: 18, height: 18)

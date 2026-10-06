@@ -48,6 +48,9 @@ internal fun ThinkingView(reasoning: String, answering: Boolean = false) {
     val start = remember { android.os.SystemClock.elapsedRealtime() }
     var seconds by remember { mutableLongStateOf(0L) }
     LaunchedEffect(answering) {
+        // The answer reclaims the lane: an open panel folds into "Thought for
+        // Ns" the moment the reply starts, and that line can still reopen it.
+        if (answering) expanded = false
         while (!answering) { seconds = (android.os.SystemClock.elapsedRealtime() - start) / 1000; delay(1000) }
     }
     val moving = motionEnabled()

@@ -72,6 +72,15 @@ enum BotTint {
         $0.userInterfaceStyle == .dark ? UIColor.white.withAlphaComponent(0.07) : UIColor.black.withAlphaComponent(0.06)
     })
 
+    /// Problem text sits on the plain transcript ground. System orange is
+    /// ~2.2:1 on white, too faint for a footnote that says a step failed, so
+    /// light mode uses a deeper orange (5:1 on white); dark keeps system orange.
+    static let warning = Color(uiColor: UIColor {
+        $0.userInterfaceStyle == .dark
+            ? UIColor.systemOrange
+            : UIColor(red: 179 / 255, green: 84 / 255, blue: 0, alpha: 1)   // #B35400
+    })
+
     static func actionLabel(_ color: String?) -> Color {
         Color(uiColor: UIColor { traits in
             let fill = foreground(color, dark: traits.userInterfaceStyle == .dark)

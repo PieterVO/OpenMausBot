@@ -11,6 +11,9 @@ struct PlanCard: View {
     @State private var showAll = false
 
     private var tint: Color { BotTint.ink(color ?? environmentColor) }
+    /// The check sits on `tint`, which is lightened in dark mode: white
+    /// only where it still reads, black otherwise.
+    private var checkColor: Color { BotTint.actionLabel(color ?? environmentColor) }
     private var visibleIndices: Range<Int> {
         guard !showAll, plan.items.count > 6 else { return plan.items.indices }
         let activeIndex = plan.items.firstIndex { $0.status == .active } ?? 0
@@ -48,7 +51,7 @@ struct PlanCard: View {
 
             VStack(alignment: .leading, spacing: 10) {
                 ForEach(Array(visibleIndices), id: \.self) { index in
-                    PlanItemRow(item: plan.items[index], tint: tint)
+                    PlanItemRow(item: plan.items[index], tint: tint, checkColor: checkColor)
                         .id(plan.items[index].id)
                         .accessibilityIdentifier("plan-\(rowID)-item-\(index)")
                 }
@@ -92,14 +95,16 @@ struct PlanCard: View {
 private struct PlanItemRow: View {
     let item: TodoItem
     let tint: Color
+    let checkColor: Color
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Environment(\.scenePhase) private var scenePhase
     @State private var checkProgress: CGFloat
     @State private var visible = false
 
-    init(item: TodoItem, tint: Color) {
+    init(item: TodoItem, tint: Color, checkColor: Color) {
         self.item = item
         self.tint = tint
+        self.checkColor = checkColor
         _checkProgress = State(initialValue: item.status == .done ? 1 : 0)
     }
 
@@ -148,7 +153,7 @@ private struct PlanItemRow: View {
             Circle().fill(tint)
                 .overlay {
                     PlanCheckmark().trim(from: 0, to: checkProgress)
-                        .stroke(.white, style: StrokeStyle(lineWidth: 2, lineCap: .round, lineJoin: .round))
+                        .stroke(checkColor, style: StrokeStyle(lineWidth: 2, lineCap: .round, lineJoin: .round))
                         .padding(5)
                 }
                 .transition(reduceMotion ? .opacity : .scale(scale: 0.6).combined(with: .opacity))
