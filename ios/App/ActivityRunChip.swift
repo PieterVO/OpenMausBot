@@ -85,13 +85,15 @@ private struct ActivityTimelineRow: View {
         .background(alignment: .topLeading) {
             if connectsNext {
                 GeometryReader { geometry in
+                    // Each receipt's 22pt badge starts below 5pt row padding
+                    // and its 1pt top inset; the next row is 8pt away.
                     HStack(spacing: 0) {
-                        Rectangle().fill(Color(uiColor: .separator))
-                            .frame(width: 1, height: max(0, geometry.size.height - 22 + 8))
+                        Rectangle().fill(Color(uiColor: UIColor.separator.withAlphaComponent(1)))
+                            .frame(width: 1, height: max(0, geometry.size.height - 28 + 8 + 6))
                         Spacer(minLength: 0)
                     }
                     .padding(.leading, 10.5)
-                    .offset(y: 22)
+                    .offset(y: 28)
                 }
                 .accessibilityHidden(true)
             }

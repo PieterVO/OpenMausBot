@@ -79,8 +79,7 @@ struct DigestSheet: View {
                 }
                 if !digest.memory.isEmpty { stat(String(localized: "\(digest.memory.count) memory changes"), symbol: "bookmark") }
                 if let tokens = digest.tokens {
-                    let count = tokens.formatted(.number.notation(.compactName).precision(.fractionLength(0...1)))
-                    stat(String(localized: "\(count) tokens"), symbol: "number")
+                    stat(String(localized: "\(tokens) tokens"), symbol: "number")
                 }
                 if let cost = digest.costUsd {
                     stat(cost.formatted(.currency(code: "USD").precision(.fractionLength(2))), symbol: "dollarsign")

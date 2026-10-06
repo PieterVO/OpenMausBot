@@ -162,6 +162,30 @@ haptic timing and real pairing are not proved by synthetic simulator scenes.
   Motion device runs, real pairing, or a real credential submission. Native
   fixture presentation and preserved synthetic interaction suites are the
   scope of this evidence; no live user data or provider was used.
+- Owner review batch: webhook tasks are now one blue user bubble with white
+  content/disclosure and a subtle payload inset, not a nested bot card.
+  Counted labels use catalog plural forms; the sheet explicitly asserts
+  `1 memory change` and rejects `1 memory changes`. Badge fill is 20%/26%,
+  symbols are 12pt semibold, and the full-opacity timeline connector spans
+  from the 22pt badge's bottom to the next badge's top.
+- Clean baseline comparison: detached `c2fc677f` and the revised app both
+  passed `TranscriptPresentationUITests/testFullKeepsLiveReasoningAvailable`
+  after uninstalling the synthetic app and regenerating their projects.
+  Bundles: `/tmp/omb-ioschat-base-c2fc677f.xcresult` and
+  `/tmp/omb-ioschat-current-common-startup.xcresult`. The temporary baseline
+  worktree was removed. No unpaired launch reproduced in this common case;
+  the new showcase suite/fixture did not exist on the baseline, so these
+  observations do not establish the intermittent failure's origin.
+- Review-batch verification: **929 core tests passed, 0 failures**, including
+  singular copied-summary counts; **17 native UI cases passed in light and
+  17 in dark**, including the singular sheet label and webhook disclosure.
+  Bundles: `/tmp/omb-ioschat-review2-light.xcresult` and
+  `/tmp/omb-ioschat-review2-dark.xcresult`. Projects were freshly regenerated
+  with `xcodegen generate`; the revised application built successfully.
+- The omitted `App/StepBadge.swift` source is included in the review fix
+  commit. Updated native frames replace the affected light/dark paths in
+  `screenshots.json`; webhook, digest and timeline states were visually
+  inspected in both appearances.
 
 The existing `scripts/verify-ios-thread-navigation-ci.sh` also runs this suite
 on disposable iPhone and iPad simulators. Keep the result bundles, then shut

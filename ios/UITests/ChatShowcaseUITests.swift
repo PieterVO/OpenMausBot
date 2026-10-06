@@ -46,6 +46,8 @@ final class ChatShowcaseUITests: XCTestCase {
         XCTAssertTrue(app.staticTexts["What Pepper did"].waitForExistence(timeout: 3))
         XCTAssertTrue(app.staticTexts["Files"].exists)
         XCTAssertTrue(app.staticTexts["Tools"].exists)
+        XCTAssertTrue(app.staticTexts["1 memory change"].exists)
+        XCTAssertFalse(app.staticTexts["1 memory changes"].exists)
         capture("digest-sheet", app)
         app.buttons["Done"].tap()
 

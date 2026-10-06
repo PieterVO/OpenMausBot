@@ -73,15 +73,15 @@ public struct DigestPresentation: Hashable, Sendable {
                     return item
                 }))
             }
-            if let dropped = digest.toolsDropped, dropped > 0 { sections.append("+\(dropped) more tools") }
+            if let dropped = digest.toolsDropped, dropped > 0 { sections.append(Self.count(dropped, one: "+%lld more tool", many: "+%lld more tools")) }
             if let files {
                 var paths = files.added.map { "added \($0)" } + files.changed.map { "changed \($0)" } + files.deleted.map { "deleted \($0)" }
-                if let count = files.truncated, count > 0 { paths.append("+\(count) more paths") }
+                if let count = files.truncated, count > 0 { paths.append(Self.count(count, one: "+%lld more path", many: "+%lld more paths")) }
                 if !paths.isEmpty { sections.append(Self.section("Files", items: paths)) }
             }
             if !memory.isEmpty { sections.append(Self.section("Memory", items: memory.map { "\($0.kind.rawValue) \($0.path)" })) }
-            if let dropped = digest.memoryDropped, dropped > 0 { sections.append("+\(dropped) more memory changes") }
-            if let tokens { sections.append("\(tokens) tokens") }
+            if let dropped = digest.memoryDropped, dropped > 0 { sections.append(Self.count(dropped, one: "+%lld more memory change", many: "+%lld more memory changes")) }
+            if let tokens { sections.append(Self.count(tokens, one: "%lld token", many: "%lld tokens")) }
             if let costUsd { sections.append(String(format: "$%.2f", costUsd)) }
             if let coverageNote { sections.append(coverageNote) }
             plainText = sections.joined(separator: "\n\n")
