@@ -1676,8 +1676,6 @@ struct ChatView: View {
                         .buttonStyle(.plain)
                         .disabled(preparingAttachments || sendingMessage)
                         .accessibilityLabel("Slash commands")
-                        .padding(.leading, 6)
-                        .padding(.bottom, 6)
 
                         TextField(
                             composerPrompt,
@@ -1686,7 +1684,12 @@ struct ChatView: View {
                         )
                             .lineLimit(1...5)
                             .font(.body)
+                            // 11pt above and below one line puts a single line on
+                            // the bar's centre, and the last line of a longer
+                            // draft level with the buttons; the minimum height
+                            // holds the centre whatever the line height is.
                             .padding(.vertical, 11)
+                            .frame(minHeight: 44)
                             .focused($composerFocused)
                             .tint(BotTint.mine)
                             .accessibilityIdentifier("message-input")
@@ -1725,7 +1728,6 @@ struct ChatView: View {
                                     .contentShape(Rectangle())
                             }
                             .buttonStyle(.plain)
-                            .padding(.bottom, 6)
                             .accessibilityLabel("Stop the current turn")
                             .accessibilityIdentifier("composer-stop")
                             .transition(.scale.combined(with: .opacity))
@@ -1752,7 +1754,6 @@ struct ChatView: View {
                         }
                         .buttonStyle(.plain)
                         .disabled(preparingAttachments || sendingMessage || liveCall.machine.isActive)
-                        .padding(.bottom, 6)
                         .accessibilityLabel(dictation.isListening ? "Stop dictation" : "Start dictation")
 
                         Button { submit() } label: {
@@ -1768,13 +1769,15 @@ struct ChatView: View {
                         }
                         .buttonStyle(.plain)
                         .disabled(!canSend)
-                        .padding(.trailing, 6)
-                        .padding(.bottom, 6)
                         .animation(.easeOut(duration: 0.15), value: canSend)
                         .accessibilityLabel(current.busy
                             ? engineCanSteer ? "Send into the running turn" : "Queue this message for when the turn finishes"
                             : "Send message")
                     }
+                    // Every control is 44pt, the bar's height at one line, so
+                    // the 32pt circles sit 6pt in from top, bottom and the
+                    // rounded end: concentric with the 22pt corners. As the
+                    // draft grows they stay on its bottom line.
                     .frame(minHeight: 44)
                     // A capsule at one line (44pt tall, 22pt corners) that
                     // keeps those 22pt corners as the draft grows, the way
