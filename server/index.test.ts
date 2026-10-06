@@ -1702,17 +1702,37 @@ describe("harness HTTP API", () => {
     const root = await fetch(`${BASE}/`);
     expect(root.status).toBe(200);
     expect(root.headers.get("content-type")).toBe("text/html");
+    expect(root.headers.get("cache-control")).toBe("no-cache");
     expect(await root.text()).toContain("Packaged OpenMausBot");
 
+    const index = await fetch(`${BASE}/index.html`);
+    expect(index.headers.get("cache-control")).toBe("no-cache");
+    await index.arrayBuffer();
+
+    // Content-hashed build output: the browser keeps it instead of
+    // downloading the whole bundle again on every load.
     const asset = await fetch(`${BASE}/assets/smoke.css`);
     expect(asset.status).toBe(200);
     expect(asset.headers.get("content-type")).toBe("text/css");
+    expect(asset.headers.get("cache-control")).toBe("public, max-age=31536000, immutable");
     expect(await asset.text()).toContain("color: white");
+    // That only holds while every file under /assets/ comes from Vite with a
+    // hash in its name; an unhashed public/assets/ file would be pinned too.
+    expect(existsSync(join(ROOT, "public", "assets"))).toBe(false);
 
     const spa = await fetch(`${BASE}/settings/desktop`);
     expect(spa.status).toBe(200);
     expect(spa.headers.get("content-type")).toBe("text/html");
+    expect(spa.headers.get("cache-control")).toBe("no-cache");
     expect(await spa.text()).toContain("Packaged OpenMausBot");
+
+    // A chunk an old page still asks for falls back to the page; that page
+    // must never be cached as if it were the immutable chunk.
+    const missingChunk = await fetch(`${BASE}/assets/missing-abc123.js`);
+    expect(missingChunk.status).toBe(200);
+    expect(missingChunk.headers.get("content-type")).toBe("text/html");
+    expect(missingChunk.headers.get("cache-control")).toBe("no-cache");
+    await missingChunk.arrayBuffer();
 
     const unknownApi = await api("GET", "/api/not-a-real-route");
     expect(unknownApi.status).toBe(404);
@@ -2382,6 +2402,40 @@ describe("harness HTTP API", () => {
       expect((await api("POST", `/api/groups/${room.id}/tasks/missing-thread`)).status).toBe(404);
       expect((await api("POST", `/api/groups/${room.id}/tasks`, { title: 42 })).status).toBe(400);
     } finally {
+      await api("DELETE", `/api/groups/${room.id}`);
+      await api("DELETE", `/api/bots/${bot.id}`);
+    }
+  });
+
+  it("saves a longer turn limit on one conversation and leaves the others at the group default", async () => {
+    const bot = (await api("POST", "/api/bots")).body.bot;
+    const room = (await api("POST", "/api/groups", { name: "Long runs", memberIds: [bot.id] })).body.group;
+    try {
+      const sibling = await api("POST", `/api/groups/${room.id}/tasks`, { title: "Short" });
+      const longer = await api("PATCH", `/api/groups/${room.id}/tasks/${room.threadId}`, { turnTimeoutMinutes: 30 });
+      expect(longer.status).toBe(200);
+      expect(longer.body.task.turnTimeoutMinutes).toBe(30);
+      const viewed = await api("POST", `/api/groups/${room.id}/tasks/${sibling.body.task.threadId}?messages=0`);
+      const tasks = viewed.body.group.tasks as Array<{ threadId: string; turnTimeoutMinutes?: number }>;
+      expect(tasks.find((task) => task.threadId === room.threadId)?.turnTimeoutMinutes).toBe(30);
+      expect(tasks.find((task) => task.threadId === sibling.body.task.threadId)?.turnTimeoutMinutes).toBeUndefined();
+
+      expect((await api("PATCH", `/api/groups/${room.id}`, { turnTimeoutMinutes: 30 })).status).toBe(400);
+      expect((await api("PATCH", `/api/groups/${room.id}/tasks/${room.threadId}`, { turnTimeoutMinutes: 10.5 })).status).toBe(400);
+      expect((await api("PATCH", `/api/groups/${room.id}/tasks/${room.threadId}`, { turnTimeoutMinutes: 1441 })).status).toBe(400);
+
+      const cleared = await api("PATCH", `/api/groups/${room.id}/tasks/${room.threadId}`, { turnTimeoutMinutes: null });
+      expect(cleared.status).toBe(200);
+      expect(cleared.body.task.turnTimeoutMinutes).toBeUndefined();
+
+      const dm = await api("PATCH", "/api/groups/test-dm", { turnTimeoutMinutes: 30 });
+      expect(dm.status).toBe(200);
+      expect(dm.body.group.turnTimeoutMinutes).toBe(30);
+      const reset = await api("PATCH", "/api/groups/test-dm", { turnTimeoutMinutes: null });
+      expect(reset.status).toBe(200);
+      expect(reset.body.group.turnTimeoutMinutes).toBeNull();
+    } finally {
+      await api("PATCH", "/api/groups/test-dm", { turnTimeoutMinutes: null });
       await api("DELETE", `/api/groups/${room.id}`);
       await api("DELETE", `/api/bots/${bot.id}`);
     }
@@ -5409,7 +5463,7 @@ describe("harness HTTP API", () => {
       }
 
       const full = trustedBots.find(candidate => candidate.approvalMode === "full")!;
-      const sibling = (await isolatedApi("POST", `/api/bots/${full.id}/tasks`, { title: "Untouched" })).body.task;
+      const sibling = (await isolatedApi("POST", `/api/bots/${full.id}/tasks`, { title: "Follows the bot" })).body.task;
       for (const body of [
         { resetApprovalToAsk: true },
         { modelSelection: targetSelection, resetApprovalToAsk: "yes" },
@@ -5430,8 +5484,10 @@ describe("harness HTTP API", () => {
       expect(switched.status).toBe(200);
       expect(switched.body.bot).toMatchObject({ modelSelection: targetSelection, approvalMode: "ask", autoApprove: false });
       expect(switched.body.task).toMatchObject({ modelSelection: targetSelection, approvalMode: "ask", alwaysAllow: [] });
+      // The sibling follows the bot onto Claude. Its Full access belonged to
+      // Codex, so it goes back to Ask in the same write, never rides along.
       expect(switched.body.bot.tasks.find((task: { threadId: string }) => task.threadId === sibling.threadId))
-        .toMatchObject({ modelSelection: full.modelSelection, approvalMode: "full" });
+        .toMatchObject({ modelSelection: targetSelection, followsBotModel: true, approvalMode: "ask", alwaysAllow: [] });
       const created = await isolatedApi("POST", `/api/bots/${full.id}/tasks`, { title: "New defaults" });
       expect(created.body.task).toMatchObject({ modelSelection: targetSelection, approvalMode: "ask" });
       const refusedCustom = trustedBots.find(candidate => candidate.approvalMode === "custom")!;
@@ -10003,7 +10059,7 @@ describe("harness HTTP API", () => {
       expect((await api("PATCH", `/api/bots/${teammate.id}`, {
         modelSelection: { instanceId: "ghost", model: "unavailable-fixture" },
       })).status).toBe(200);
-      expect((await api("POST", `/api/bots/${bot.id}/read`, { threadId: bot.threadId })).status).toBe(200);
+      expect((await api("POST", `/api/bots/${teammate.id}/read`, { threadId: teammate.threadId })).status).toBe(200);
       const crossEvents = await openSse(`${BASE}/api/events`);
       let crossRun;
       try {
@@ -10012,25 +10068,30 @@ describe("harness HTTP API", () => {
           (frame) => frame.kind === "notify" && frame.notification?.kind === "routine-failed",
           5_000,
         );
-        expect(failedNotice.notification).toMatchObject({ botId: bot.id, threadId: bot.threadId });
+        expect(failedNotice.notification).toMatchObject({ botId: teammate.id, threadId: teammate.threadId });
       } finally {
         crossEvents.close();
       }
       expect(crossRun.status).toBe(201);
-      // Execution belongs to the teammate, but the confirmed request's
-      // reporting destination is still the proposer's conversation.
+      // Execution and reporting both belong to the teammate: a routine another
+      // bot asked for reports into the running bot's main thread, not into the
+      // proposer's conversation that held the card.
       await expect.poll(async () => {
-        const source = (await api("GET", `/api/threads/${bot.threadId}/messages`)).body;
-        return source.messages.filter(
+        const destination = (await api("GET", `/api/threads/${teammate.threadId}/messages`)).body;
+        return destination.messages.filter(
           (message: { routineRun?: { runId?: string; status?: string } }) =>
             message.routineRun?.runId === crossRun.body.run.id && message.routineRun?.status === "failed",
         );
       }, { timeout: 5_000 }).toHaveLength(1);
+      expect((await api("GET", `/api/threads/${bot.threadId}/messages`)).body.messages.some(
+        (message: { routineRun?: { runId?: string } }) => message.routineRun?.runId === crossRun.body.run.id,
+      )).toBe(false);
       const crossStateAfterRun = (await api("GET", "/api/bots?messages=0")).body;
-      expect(crossStateAfterRun.bots.find((candidate: { id: string }) => candidate.id === bot.id)
-        ?.tasks.find((task: { threadId: string }) => task.threadId === bot.threadId)?.unread).toBe(true);
+      expect(crossStateAfterRun.bots.find((candidate: { id: string }) => candidate.id === teammate.id)
+        ?.tasks.find((task: { threadId: string }) => task.threadId === teammate.threadId)?.unread).toBe(true);
 
-      // Moving either bot out of the section revokes that reporting route.
+      // A teammate moved out of the section still never reports into the
+      // proposer's conversation.
       expect((await api("PATCH", `/api/bots/${teammate.id}`, { section: "Private routine work" })).status).toBe(200);
       const movedRun = await api("POST", `/api/routines/${crossRoutine.id}/run`);
       expect(movedRun.status).toBe(201);
@@ -10943,6 +11004,12 @@ describe("harness HTTP API", () => {
       const [work, other, duplicate] = requested.body.messageIds;
       expect(work).toBe(duplicate);
       expect(other).not.toBe(work);
+      // Older phones draw an unknown kind by its text, so each card carries
+      // a plain line naming the app and the account it is waiting on.
+      const stored = (await api("GET", `/api/threads/${bot.threadId}/messages`)).body.messages as any[];
+      const workCard = stored.find((message) => message.id === work);
+      expect(workCard).toMatchObject({ kind: "connector", connector: { alias: "work", status: "required" } });
+      expect(workCard.text).toBe(`Connect ${workCard.connector.label} as “work” to continue.`);
       expect((await create([{ slug: "gmail", alias: "work" }])).body.messageIds).toEqual([work]);
       const card = (id: string, action: string) => `/api/bots/${bot.id}/connector-cards/${id}/${action}`;
       expect((await api("POST", card(work, "authorize"), { threadId: bot.threadId })).body.url).toBe("https://connect.composio.dev/fixture-only");
@@ -10982,6 +11049,9 @@ describe("harness HTTP API", () => {
       });
       expect(response.status).toBe(200);
       const { messageIds } = await response.json() as { messageIds: string[] };
+      const stored = (await api("GET", `/api/threads/${bot.threadId}/messages`)).body.messages as any[];
+      const slackCard = stored.find((message) => message.id === messageIds[0]);
+      expect(slackCard.text).toBe(`Connect ${slackCard.connector.label} to continue.`);
       const card = `/api/bots/${bot.id}/connector-cards/${messageIds[0]}/authorize`;
       const paths = ["/api/connectors/slack/authorize", card, card];
       const before = connectorLinkRequests.length;

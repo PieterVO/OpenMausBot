@@ -104,7 +104,7 @@ import {
 } from "./avatar-image.ts";
 import { fitsOnOneLine, parseBotProfilePatch } from "./bot-profile.ts";
 import { groupTurnCwd } from "./room-cwd.ts";
-import { RoomTurnDeadline, RoomTurnStallRegistry, roomTurnTimeoutMessage } from "./room-turn-timeout.ts";
+import { RoomTurnDeadline, RoomTurnStallRegistry, effectiveRoomTurnTimeoutMinutes, parseConversationTurnTimeout, roomTurnTimeoutMessage } from "./room-turn-timeout.ts";
 import { roomTurnEnd, type RoomClaimEnd } from "./room-turn-end.ts";
 import { pickComputer } from "./computer-selection.ts";
 import * as boat from "./boat.ts";
@@ -124,6 +124,7 @@ import {
 } from "./cloud-backend.ts";
 import * as composio from "./composio.ts";
 import { connectorCallFromFrame, connectorRefusalText, connectorUnrecognizedText, evaluateConnectorTools } from "./connector-verdict.ts";
+import { connectorCardText } from "./connector-card-text.ts";
 import { chiefOfStaffSystemPrompt } from "./chief-of-staff.ts";
 import { buildRecall } from "./recall.ts";
 import { createMemoryUpkeep, upkeepEnabled } from "./memory-upkeep.ts";
@@ -176,6 +177,7 @@ import {
   localVmSpacesOs,
   parseConfigPatch,
   roomTurnTimeoutMinutes,
+  mcpCallTimeoutMinutes,
   threadEventLogMaxBytes,
   maxConcurrentBotThreads,
   threadEventLogRetentionDays,
@@ -222,7 +224,8 @@ import { GroupUsageReader } from "./group-thread-usage.ts";
 import { ledgerCost } from "./model-prices.ts";
 import type { PriceList } from "./prices.ts";
 import type { RequestAuth } from "./request-auth.ts";
-import { checkProviderKey, PROVIDER_KEY_KINDS, type ProviderKeyKind } from "./provider-key-check.ts";
+import { checkProviderKey, PROVIDER_KEY_KINDS, providerBaseUrl, type ProviderKeyKind } from "./provider-key-check.ts";
+import { forgetKey, noteKeyAccepted, noteKeyRejected, onKeyRejectionChange } from "./key-rejections.ts";
 import { assertWithinBudget, noteSpend, spendAlertText, spendState, takeSpendAlert } from "./spend.ts";
 import { fleetAvailable, fleetRequest, fleetSocketPath } from "./fleet-client.ts";
 import { entitled } from "./enterprise.ts";
@@ -336,6 +339,7 @@ import { RESTART_EXIT_CODE } from "./restart.ts";
 import { holdIncludedServices } from "./included-services.ts";
 import type { ProviderInstance } from "./contracts.ts";
 import { selectDefaultModelSelection, withNewBotEffort } from "./default-model-selection.ts";
+import { threadModelFallback, type ThreadEngine } from "./thread-model.ts";
 import { computerEngineMoveText, removedComputerInstanceIds, writeComputerEngineMoveLines } from "./computer-engine-removal.ts";
 import { cancelPeerApprovalsFor, cancelPeerApprovalsForThread, dismissStalePeerCards, peerApprovalFailure, requestPeerApproval, resolvePeerComms, type ApprovalBus } from "./peer-approval.ts";
 import { peerDeliveryReceipt, type PeerDeliveryReceipt } from "./peer-delivery.ts";
@@ -348,6 +352,7 @@ import {
   roomResponders,
   sectionKey,
   Store,
+  threadTitleFrom,
   titleFromLlm,
   type BotRecord,
   type GroupDefaultResponder,
@@ -639,6 +644,7 @@ import { createHostedSlackRoutes } from "./routes/hosted-slack.ts";
 import { createBotPresetRoutes } from "./routes/bot-presets.ts";
 import { createBotMemoryRoutes } from "./routes/bot-memory.ts";
 import { createDeciderRoutes } from "./routes/decider.ts";
+import { createThreadModelRoutes } from "./routes/thread-models.ts";
 import { createDesktopViewer, desktopViewerUrl } from "./routes/desktop-viewer.ts";
 import { localDesktopTarget, localVmViewerStatus, viewerTargetId } from "./desktop-viewer-targets.ts";
 import { createAntigravityLeftoverRoutes } from "./routes/antigravity-leftovers.ts";
@@ -1215,12 +1221,13 @@ function openerFrom(fromThreadId: string): string | undefined {
   return person && !cloudOwnerPerson(person) ? person : CLOUD_NOBODY_KEY;
 }
 
-/** The model a thread a bot opens from one of its own threads starts on:
- * that thread's, not the bot default the person may have moved away from
- * (#1950). Only the bot's own thread counts — a room or a teammate's thread
- * is not one of its tasks, and another bot's model belongs to another engine.
- * Approval stays the bot's, except that a level the inherited engine would
- * have to confirm on a model switch starts the new thread in Ask. */
+/** The model a thread a bot opens from one of its own threads starts on
+ * (#1950): the model a person picked in that thread, kept as the new thread's
+ * own. A thread that follows the bot opens one that follows it too. Only the
+ * bot's own thread counts — a room or a teammate's thread is not one of its
+ * tasks, and another bot's model belongs to another engine. Approval stays
+ * the bot's, except that a level the inherited engine would have to confirm
+ * on a model switch starts the new thread in Ask. */
 function parentThreadModel(botId: string, parentThreadId: string): { modelSelection?: ModelSelection; approvalMode?: "ask" } {
   // The stored profile, never a per-thread projection: the comparison is
   // against the defaults the new thread would otherwise get.
@@ -2071,6 +2078,9 @@ const managedPolicy = new ManagedDesktopPolicy({ onChange: () => {
   broadcast({ kind: "config", ...configStatus() });
   resyncOpenCodeProviderKeys();
 } });
+// A key the provider refused, or accepted again, changes what Model
+// providers and the picker show; the config event refreshes /api/instances.
+onKeyRejectionChange(() => broadcast({ kind: "config", ...configStatus() }));
 /** A computer kind this server will not use, refused before anything is
  * prepared: a Cloud home never offers this computer or a Local VM
  * (cloud-home.ts), and an enrolled organisation may disallow any kind. */
@@ -2501,6 +2511,9 @@ function agentsIntegration(
         const speaking = botForThread(botId, threadId) ?? store.bot(botId);
         return tts.voiceReady(cfg, speaking?.voice) && speaking?.voiceNotes !== false ? "1" : "0";
       })(),
+      // And for a role: team setup, bot creation and deletion, rooms and
+      // retries are shown only to a Chief of Staff, whom their routes require.
+      OMB_CHIEF_OF_STAFF: store.bot(botId)?.chiefOfStaff === true ? "1" : "0",
     },
   };
 }
@@ -3482,6 +3495,63 @@ function checkedTaskModelSwitch(current: BotRecord, raw: unknown, updateBotDefau
   return checked;
 }
 
+/** An engine as a turn's start sees it, without waiting on its CLI: the live
+ * instance and what its last read said (registry.lastSnapshot). Before the
+ * first read it counts as available, so only what is known stops a pick. */
+function threadEngine(instanceId: string): ThreadEngine | undefined {
+  const live = registry.get(instanceId);
+  if (!live) return undefined;
+  return {
+    instanceId, driverKind: live.driverKind, enabled: live.enabled, models: live.models,
+    capabilities: { modelVariants: live.adapter.capabilities.modelVariants === true },
+    snapshot: registry.lastSnapshot(instanceId) ?? { state: "available" },
+    access: providerConfigs()[instanceId]?.access ?? registry.access(instanceId),
+  };
+}
+
+/** This thread's own model, when it gives way to its bot's now
+ * (threadModelFallback); null when the thread follows its bot or its own
+ * model runs as picked. */
+function threadModelGivingWay(botId: string, threadId: string): ModelSelection | null {
+  const bot = store.bot(botId);
+  const own = store.taskByThread(botId, threadId)?.modelSelection;
+  if (!bot || !own) return null;
+  return threadModelFallback(own, bot.modelSelection, threadEngine, {
+    refusal: policyModelRefusal,
+    ...(hostedModels ? { allows: (selection: ModelSelection) => hostedModels!.allows(selection) } : {}),
+  }) ? own : null;
+}
+
+/** The model a turn in this thread would run on now (healThreadModel). */
+function turnSelection(botId: string, threadId: string): ModelSelection | undefined {
+  return threadModelGivingWay(botId, threadId) ? store.bot(botId)?.modelSelection : store.projectBotForTask(botId, threadId)?.modelSelection;
+}
+
+/** A model as a person reads it: its catalog label, after its engine's name
+ * while that engine is here. */
+function modelName(selection: ModelSelection): string {
+  const instance = registry.get(selection.instanceId);
+  const label = instance?.models.options.find((option) => option.id === selection.model)?.label ?? selection.model;
+  return instance ? `${instance.displayName || instance.driverKind} · ${label}` : label;
+}
+
+/** A thread's own model that can't run here gives way to its bot's: the turn
+ * about to start runs on the bot's model, the thread follows the bot from
+ * then on, and one plain line in it says so. Every turn starts through
+ * startTurn (a person's message, a routine, a delegation, a webhook, a
+ * queued follow-up), so this is the one place it happens; a room turn
+ * already runs on each member's own model. */
+function healThreadModel(botId: string, threadId: string): void {
+  const bot = store.bot(botId);
+  const own = threadModelGivingWay(botId, threadId);
+  if (!bot || !own || bot.approvalGrant || threadBusy(botId, threadId)) return;
+  if (!store.followBotModel(botId, [threadId], (from, to) => hostedModels?.resetTask(from, to) ?? {}).length) return;
+  store.appendMessage(threadId, { role: "bot", kind: "activity", tool: {
+    name: `notice: This thread's model (${modelName(own)}) isn't available, so it now uses ${bot.name}'s model (${modelName(bot.modelSelection)}).`,
+    ok: true,
+  } });
+}
+
 function checkedExportSkillNames(
   value: unknown,
   bots: readonly BotRecord[],
@@ -3675,18 +3745,32 @@ function checkedMemberIds(value: unknown): { ok: true; memberIds: string[] } | {
   return { ok: true, memberIds };
 }
 let bootSelection = { instanceId: "", model: "" };
+/** The engines read at start, while it runs (below). It is where the server
+ * learns what each engine supports (a Claude CLI's version and flags), so a
+ * turn waits for it, as every turn did when the server listened only after
+ * that read. */
+let enginesRead: Promise<void> | null = null;
 /** Preset bots for New bot, from shared files and the organization (presets.ts). */
 const presetStore = createPresetStore();
 const store = new Store(
   () => bootSelection,
   (selection) => withNewBotEffort(selection, cfg.newBots?.effort, registry.get(selection.instanceId)?.adapter.capabilities.effortLevels),
+  (instanceId) => registry.cliTarget(instanceId)?.driverKind,
 );
 const teamComputers = new TeamComputers(join(DATA_DIR, "team-computers.json"), ENVIRONMENT_ID);
 let followupsReady = false;
 const sendSequencer = new SendSequencer();
 // Before the new-bot default is read: a saved default may name the engine.
 await retryComputerEngineMove();
-bootSelection = await defaultSelection();
+// Reading the new-bot default probes every engine CLI (each up to its
+// timeout), and at start only the first-run seed needs the answer. A later
+// start listens without waiting: the same read runs behind it, and turns
+// wait for it (enginesRead).
+if (store.needsSeed()) bootSelection = await defaultSelection();
+else enginesRead = defaultSelection().then(
+  (selection) => { bootSelection = selection; },
+  (error) => console.warn(`[engines] reading the engines at start failed: ${error instanceof Error ? error.message : String(error)}`),
+).finally(() => { enginesRead = null; });
 store.seedIfEmpty();
 hostedModels?.reconcile(store);
 // Skills library boot sweep (features.skillsLibrary): migrate per-bot
@@ -3740,11 +3824,13 @@ if (browserCleanupReferencesReconciled) browserCleanup.startPending();
  * than the desktop window did. Stripped here rather than at each call site
  * so a new broadcast cannot forget. */
 let activeCoordinationForThread = (_threadId: string): boolean => false;
-const wireTask = (task: TaskRecord): WireTask => {
+/** One thread as a client sees it. `botModel` is its bot's model: a thread
+ * without a model of its own runs on it (toWireTask). */
+const wireTask = (task: TaskRecord, botModel: ModelSelection): WireTask => {
   // Time-based snoozes heal on read against the server clock — no client
   // timer, no device skew. The 0 sentinel ("until new activity") is not a
   // time and survives reads; only a wake event in the store clears it.
-  const { snoozedUntil, ...base } = toWireTask(task);
+  const { snoozedUntil, ...base } = toWireTask(task, botModel);
   const coordinated = { ...base, waitingForTeammates: activeCoordinationForThread(task.threadId) && !task.busy };
   const asleep = snoozedUntil === 0 || (snoozedUntil !== undefined && snoozedUntil > Date.now());
   return asleep ? { ...coordinated, snoozedUntil } : coordinated;
@@ -3759,7 +3845,7 @@ const wireBot = (bot: BotRecord): WireBot => {
     ? { ...rest, approvalMode: "ask" as const, autoApprove: false }
     : rest;
   return { ...visible, waitingForTeammates: activeCoordinationForThread(bot.threadId) && !threadBusy(bot.id, bot.threadId),
-    avatarUrl: visible.avatarUrl ?? null, ...(tasks ? { tasks: tasks.map(wireTask) } : {}) };
+    avatarUrl: visible.avatarUrl ?? null, ...(tasks ? { tasks: tasks.map((task) => wireTask(task, bot.modelSelection)) } : {}) };
 };
 
 function toolScopeForTurn(botId: string) {
@@ -3774,7 +3860,7 @@ function toolScopeForTurn(botId: string) {
  * can validate it before sending the confirmation that makes it effective. */
 const wireTrustedApprovalBot = (bot: NonNullable<ReturnType<typeof store.bot>>) => {
   const { resumeCursors: _resumeCursors, tasks, approvalGrant: _approvalGrant, lastProfileRequestId: _lastProfileRequestId, lastTeamSetupReceipt: _lastTeamSetupReceipt, packageBase: _packageBase, assignedSkills: _assignedSkills, ...rest } = bot;
-  return { ...rest, approvalMode: approvalModeFor(rest), avatarUrl: rest.avatarUrl ?? null, ...(tasks ? { tasks: tasks.map(wireTask) } : {}) };
+  return { ...rest, approvalMode: approvalModeFor(rest), avatarUrl: rest.avatarUrl ?? null, ...(tasks ? { tasks: tasks.map((task) => wireTask(task, bot.modelSelection)) } : {}) };
 };
 
 /** A settings-based preview, not a receipt of a dispatched turn. No
@@ -4466,7 +4552,7 @@ const storedAvatarExists = (avatarUrl: string): boolean =>
 const publicBot = (bot: NonNullable<ReturnType<typeof store.bot>>) => ({
   ...wireBot(bot),
   ...messagePage(bot.threadId, DEFAULT_PAGE),
-  tasks: store.tasks(bot.id).map(wireTask),
+  tasks: store.tasks(bot.id).map((task) => wireTask(task, bot.modelSelection)),
 });
 const publicBotQueuedMessages = () => queuedSteerSnapshot((botId, threadId) => Boolean(store.taskByThread(botId, threadId)));
 
@@ -4694,6 +4780,14 @@ function updateChannel(groupId: string, value: unknown): GroupRecord {
     const responder = checkedGroupResponder(body.defaultResponder, memberIds);
     if (!responder) throw Object.assign(new Error("invalid default responder"), { status: 400 });
     patch.defaultResponder = responder;
+  }
+  if (Object.prototype.hasOwnProperty.call(body, "turnTimeoutMinutes")) {
+    if (!existing.dm) {
+      throw Object.assign(new Error("set the turn limit on that conversation"), { status: 400 });
+    }
+    const parsed = parseConversationTurnTimeout(body.turnTimeoutMinutes);
+    if (!parsed.ok) throw Object.assign(new Error(parsed.error), { status: 400 });
+    patch.turnTimeoutMinutes = parsed.minutes;
   }
   if (body.cwd !== undefined) {
     if (existing.dm) throw Object.assign(new Error("direct-message channels cannot have a working folder"), { status: 400 });
@@ -4977,7 +5071,14 @@ function publicGroupState(record: GroupRecord): WireGroup {
   const { installedPackage: _installedPackage, ...group } = record;
   let usage: WireGroup["usage"];
   try { usage = groupUsageReader.forThread(group.threadId); } catch { /* accounting must not block chat */ }
-  return { ...group, usage: usage ?? null, working: groupIsWorking(group) || [...roomHandoffs.nodes.values()].some(n => n.groupId === group.id && !["completed", "failed", "cancelled"].includes(n.status)) };
+  return {
+    ...group,
+    // Always present so a client can tell "back to the group default"
+    // apart from a partial patch that did not mention the field.
+    turnTimeoutMinutes: record.turnTimeoutMinutes ?? null,
+    usage: usage ?? null,
+    working: groupIsWorking(group) || [...roomHandoffs.nodes.values()].some(n => n.groupId === group.id && !["completed", "failed", "cancelled"].includes(n.status)),
+  };
 }
 
 function beginGroupTurnOperation(
@@ -9635,6 +9736,8 @@ async function startTurn(
       },
     };
   }
+  // A thread whose own model can't run runs on its bot's from now on.
+  healThreadModel(botId, threadId);
   const bot = store.projectBotForTask(botId, threadId);
   if (!bot) throw Object.assign(new Error("no such task"), { status: 404 });
   // Routines and legacy peer delivery already have their own completion
@@ -9862,6 +9965,10 @@ async function startTurn(
 
   void (async () => {
     try {
+      if (enginesRead) {
+        await enginesRead;
+        if (!directTurnClaimIsCurrent(bot.id, dispatchClaimId, threadId)) throw new DirectTurnSetupCancelled("turn stopped while the engines were read");
+      }
       // Readiness can wait on the network. Admit the task first so its busy
       // state, Stop action and watchdog own that wait just like VM setup.
       if (opts?.runOn === "cloud") {
@@ -10833,6 +10940,7 @@ async function startTurn(
         mentionTurn: tagged.length > 0,
         integrations,
         mcpFromUserConfig: claudeUserMcpEnabled(cfg) && !managedPolicy.restrictsMcp(),
+        mcpCallTimeoutMs: mcpCallTimeoutMinutes(cfg) * 60_000,
         cwd,
       }), () => !directTurnClaimExists(bot.id, dispatchClaimId, threadId), async () => {
         await instance.adapter.interruptTurn(threadId).catch(() => {});
@@ -11067,6 +11175,9 @@ function routineSourceOwner(run: Pick<RoutineRun, "botId" | "sourceThreadId" | "
       ? { bot, group: undefined, threadId: task.threadId }
       : null;
   }
+  // Without a results snapshot (a run from before every routine reported to
+  // its bot's main thread, or a bot with no visible thread) the chat that
+  // made the routine is the destination.
   const threadId = run.sourceThreadId?.trim();
   if (!threadId) return null;
   // Validate before messagesFor(): Store lazily opens transcript storage, so
@@ -11084,6 +11195,25 @@ function routineSourceOwner(run: Pick<RoutineRun, "botId" | "sourceThreadId" | "
   }
   const group = store.groupByThread(threadId);
   return group?.memberIds.includes(bot.id) ? { bot, group, threadId } : null;
+}
+
+/** There is no durable "main thread" (bot.threadId is only the UI
+ * selection), so a routine reports into the bot's oldest open conversation:
+ * the one it was created with until that is deleted or archived. Deleting
+ * the last one already gives the bot a fresh conversation (Store.deleteTask). */
+function botMainThread(botId: string): string | undefined {
+  const visible = store.tasks(botId).filter((task) => !task.routineRunId);
+  const open = visible.filter((task) => task.archivedAt === undefined);
+  return (open.length ? open : visible).reduce<TaskRecord | undefined>(
+    (oldest, task) => (!oldest || task.createdAt < oldest.createdAt ? task : oldest), undefined,
+  )?.threadId;
+}
+
+/** Routines without a chosen thread used to get an automatic "<name> ·
+ * Results" thread. One nobody renamed is that automatic default, not a
+ * choice: new runs move to the main thread, and the old thread stays. */
+function legacyResultsThread(routineName: string, task: TaskRecord): boolean {
+  return task.title.endsWith(" · Results") || task.title === threadTitleFrom(`${routineName} · Results`);
 }
 
 function routineSourceThread(run: RoutineRun): string | null {
@@ -11326,19 +11456,29 @@ routines = new RoutineManager({
     return Boolean(bot && !bot.hidden && task && !task.routineRunId);
   },
   resolveResultsThread: (routine, forceNew) => {
-    // A trusted chat source is already snapshotted as sourceThreadId on each
-    // run. Keep it distinct: it can belong to a teammate or room, whereas an
-    // explicit resultsThreadId must be a visible task owned by the running bot.
-    if (!forceNew && routineSourceOwner(routine)) return routine.resultsThreadId;
+    // Every run reports into the routine's bot's main thread, wherever the
+    // routine was made (chat, editor, API, or a teammate's request). A run
+    // still executes in its own hidden task, which Run logs and Open run use.
+    // A thread the person chose in "Post results to" keeps winning.
+    const bot = store.bot(routine.botId);
+    const chosen = !forceNew && routine.resultsThreadId && bot && !bot.hidden
+      ? store.taskByThread(bot.id, routine.resultsThreadId) : undefined;
+    // On a Cloud home a routine reports only where its writer may write: a
+    // guest's (or nobody's) keeps a results conversation opened as theirs.
+    const opener = CLOUD_HOME ? routineOpener(routine.id) : undefined;
+    const main = bot && !bot.hidden ? botMainThread(bot.id) : undefined;
+    const mainAllowed = main && (!CLOUD_HOME || (opener === CLOUD_OWNER_KEY && !cloudGuestOpened(main)));
+    const keepChosen = chosen && !chosen.routineRunId && !(mainAllowed && legacyResultsThread(routine.name, chosen));
+    if (keepChosen) return chosen.threadId;
+    if (mainAllowed || !CLOUD_HOME) return main;
     const threadId = store.createTask(routine.botId, `${routine.name} · Results`, false)?.threadId;
-    // On a Cloud home the results conversation is opened by whoever wrote the
-    // routine: it carries their name for it (cloudGuestOpened).
-    if (threadId && CLOUD_HOME) threadStarters.set(threadId, routineOpener(routine.id));
+    if (threadId) threadStarters.set(threadId, opener!);
     return threadId;
   },
   discardResultsThread: (botId, threadId) => {
     const task = store.taskByThread(botId, threadId);
-    if (task && !task.busy && !task.routineRunId && store.messagesFor(threadId).length === 0) {
+    // The main thread is reused, never allocated, so a failed write keeps it.
+    if (task && threadId !== botMainThread(botId) && !task.busy && !task.routineRunId && store.messagesFor(threadId).length === 0) {
       store.deleteTask(botId, threadId);
       handoffs.forget(threadId);
     }
@@ -11512,7 +11652,11 @@ if (recoveryOwners.length > 0) {
 // after the user confirms a durable card. Keeping this beside the scheduler
 // makes the card resolvable after an app restart without involving the model.
 async function cloudRoutineReadiness(botId: string, threadId?: string): Promise<{ ready: boolean; reason?: string }> {
-  const bot = threadId ? store.projectBotForTask(botId, threadId) : store.bot(botId);
+  const projected = threadId ? store.projectBotForTask(botId, threadId) : store.bot(botId);
+  // The model its turn will run on: a thread's own model that can't run
+  // gives way to the bot's when the turn starts (healThreadModel).
+  const selection = threadId ? turnSelection(botId, threadId) : projected?.modelSelection;
+  const bot = projected && selection ? { ...projected, modelSelection: selection } : projected;
   if (!bot || bot.hidden) return { ready: false, reason: "The routine's target bot no longer exists." };
   if (!boat.boatConfigured(cfg)) {
     return {
@@ -12244,10 +12388,9 @@ const webhooks = new WebhookManager({
     if (!store.bot(botId)) return;
     store.appendMessage(threadId, { role: "bot", kind: "text", text, webhookPost: true });
   },
-  // Mirrors resolveResultsThread's routines wiring a few hundred lines up
-  // in this same file: create-on-first-use, never activated (so it never
-  // steals the bot's live selection the way POST /api/bots/:id/tasks
-  // does), reused forever after via trigger.resultsThreadId.
+  // Create-on-first-use, never activated (so it never steals the bot's
+  // live selection the way POST /api/bots/:id/tasks does), reused forever
+  // after via trigger.resultsThreadId.
   resolvePostThread: (trigger, forceNew) => {
     if (!forceNew && trigger.resultsThreadId) return trigger.resultsThreadId;
     return store.createTask(trigger.botId, "Updates", false)?.threadId;
@@ -13081,6 +13224,9 @@ async function runGroupMemberTurn(
     { id: "playbooks", label: "Playbooks", text: installedPlaybookInstructions(text, bot.playbooks) },
   ]);
 
+  // The engines read at start is part of setup (it learns what this engine
+  // supports): wait for it before the claim below.
+  if (enginesRead) await enginesRead;
   // run the turn and wait for it to settle, folding the reply text so a
   // chained @mention can be routed afterwards
   // Claim only after setup succeeded. An unavailable, busy, unsupported, or
@@ -13118,7 +13264,13 @@ async function runGroupMemberTurn(
     if (providerTurnId) retireProviderTurn(providerTurnId);
     else markCancelledProviderHandshake(threadId, retirementOwner);
   };
-  const timeoutMinutes = roomTurnTimeoutMinutes(cfg);
+  const liveGroup = store.group(groupId) ?? group;
+  const timeoutMinutes = effectiveRoomTurnTimeoutMinutes(
+    roomTurnTimeoutMinutes(cfg),
+    liveGroup.dm
+      ? liveGroup.turnTimeoutMinutes
+      : store.groupTaskByThread(liveGroup.id, threadId)?.turnTimeoutMinutes,
+  );
   const outcome = await new Promise<GroupMemberTurnOutcome>((resolve) => {
     let done = false;
     let unsub = () => {};
@@ -13198,6 +13350,7 @@ async function runGroupMemberTurn(
         cwd,
         integrations,
         mcpFromUserConfig: claudeUserMcpEnabled(cfg) && !managedPolicy.restrictsMcp(),
+        mcpCallTimeoutMs: mcpCallTimeoutMinutes(cfg) * 60_000,
         ...(instance.instanceId === readyBot.modelSelection.instanceId
           ? memberTurnSelection(readyBot.modelSelection)
           : { model: instance.models.default }),
@@ -15398,6 +15551,7 @@ function configStatus() {
     // not a secret — the settings picker shows it; "" = follow the system
     language: cfg.language ?? "",
     rooms: { turnTimeoutMinutes: roomTurnTimeoutMinutes(cfg) },
+    mcp: { callTimeoutMinutes: mcpCallTimeoutMinutes(cfg) },
     automaticRecovery: cfg.automaticRecovery ?? { enabled: false },
     // absent effort = no level is sent, so clients can tell it from any level
     newBots: cfg.newBots?.effort ? { effort: cfg.newBots.effort } : {},
@@ -15733,14 +15887,21 @@ function serveStatic(res: ServerResponse, path: string): boolean {
   try {
     const data = readFileSync(file);
     const type = MIME[extname(file)] ?? "application/octet-stream";
-    res.writeHead(200, { "content-type": type, ...(type === "text/html" ? PAGE_HEADERS : {}) });
+    // Vite puts a content hash in the name of every file it writes under
+    // /assets/, so a URL there never changes: the browser keeps it instead of
+    // downloading the bundle on every load. That only holds while public/ has
+    // no assets/ dir (index.test.ts checks). Pages are revalidated, so a new
+    // build shows up on the next load.
+    const cache = type === "text/html" ? "no-cache" : safe.startsWith("/assets/") ? "public, max-age=31536000, immutable" : null;
+    res.writeHead(200, { "content-type": type, ...(type === "text/html" ? PAGE_HEADERS : {}), ...(cache ? { "cache-control": cache } : {}) });
     res.end(data);
     return true;
   } catch {
-    // SPA fallback
+    // SPA fallback. Never immutable: a missing chunk answered with the page
+    // must not stay cached under the chunk's URL.
     try {
       const data = readFileSync(join(STATIC_DIR, "index.html"));
-      res.writeHead(200, { "content-type": "text/html", ...PAGE_HEADERS });
+      res.writeHead(200, { "content-type": "text/html", "cache-control": "no-cache", ...PAGE_HEADERS });
       res.end(data);
       return true;
     } catch {
@@ -15857,6 +16018,15 @@ ROUTES.push(createBotMemoryRoutes({
   },
 }));
 ROUTES.push(createDeciderRoutes({ decider }));
+// "Switch them too": a bot's threads on a model of their own follow its model again.
+ROUTES.push(createThreadModelRoutes({
+  bot: (id) => store.bot(id),
+  busy: (botId, threadId) => threadBusy(botId, threadId),
+  follow: (botId, threadIds) => store.followBotModel(botId, threadIds, (from, to) => hostedModels?.resetTask(from, to) ?? {}),
+  // Like updateBotDefault on a thread: on a Cloud home, the owner's alone.
+  mayChangeModel: (auth) => !CLOUD_HOME || cloudOwnerSession(auth),
+  reply: (botId) => publicBot(store.bot(botId)!),
+}));
 ROUTES.push(createAntigravityLeftoverRoutes({
   hosted: Boolean(hostedModels),
   isAntigravity: (instanceId) => registry.get(instanceId)?.driverKind === "antigravityAgent",
@@ -19037,6 +19207,9 @@ const handleRequest = async (req: IncomingMessage, res: ServerResponse) => {
           const message = store.appendMessage(threadId, {
             role: "bot",
             kind: "connector",
+            // Read only by clients that predate the card (older phones draw
+            // an unknown kind by its text); see connector-card-text.ts.
+            text: connectorCardText(toolkit.label, item.alias),
             ...(owner.group ? { from: { botId: owner.bot.id, name: owner.bot.name, color: owner.bot.color } } : {}),
             connector: {
               slug: item.slug,
@@ -19433,7 +19606,7 @@ const handleRequest = async (req: IncomingMessage, res: ServerResponse) => {
       return json(res, 200, {
         bots: shownBots.map((bot) => memberBot({
           ...wireBot(bot),
-          tasks: store.tasks(bot.id).map(wireTask),
+          tasks: store.tasks(bot.id).map((task) => wireTask(task, bot.modelSelection)),
           ...messagePage(bot.threadId, limit),
         }, visible)),
         botQueuedMessages: visible.everything ? queued : Object.fromEntries(Object.entries(queued).filter(([threadId]) => visible.thread(threadId))),
@@ -20344,25 +20517,36 @@ const handleRequest = async (req: IncomingMessage, res: ServerResponse) => {
       if (!body || typeof body !== "object" || Array.isArray(body)) {
         return json(res, 400, { error: "body must be a JSON object" });
       }
-      const allowed = new Set(["title", "pinned"]);
+      const allowed = new Set(["title", "pinned", "turnTimeoutMinutes"]);
       if (Object.keys(body).some((key) => !allowed.has(key))) return json(res, 400, { error: "unsupported channel thread setting" });
       const existing = store.groupTaskByThread(group.id, m[2]);
       if (!existing) return json(res, 404, { error: "no such channel task" });
       const pinning = body.pinned !== undefined;
       const renaming = body.title !== undefined;
-      if (!pinning && !renaming) return json(res, 400, { error: "unsupported channel thread setting" });
+      const limiting = Object.prototype.hasOwnProperty.call(body, "turnTimeoutMinutes");
+      if (!pinning && !renaming && !limiting) return json(res, 400, { error: "unsupported channel thread setting" });
       if (pinning && typeof body.pinned !== "boolean") return json(res, 400, { error: "pinned must be a boolean" });
       if (renaming && typeof body.title !== "string") return json(res, 400, { error: "title must be a string" });
+      const parsedLimit = limiting ? parseConversationTurnTimeout(body.turnTimeoutMinutes) : null;
+      if (parsedLimit && !parsedLimit.ok) return json(res, 400, { error: parsedLimit.error });
       // Echoing the current title lets a newer client pin on an older server
       // without the old handler turning a missing title into "Untitled".
       // That echo is not a rename. A real rename stays blocked while working.
       const titleChange = renaming && body.title !== existing.title;
       const notYours = titleChange ? cloudThreadRefusal(auth, m[2]) : null;
       if (notYours) return json(res, 403, { error: notYours });
-      if (channelTaskBlocked(group) && !(pinning && !titleChange)) {
+      // A longer limit applies to the next turn, so it can be saved while
+      // this one is still running. A rename still waits.
+      const settingsOnly = !titleChange && (pinning || limiting);
+      if (channelTaskBlocked(group) && !settingsOnly) {
         return json(res, 409, { error: "this channel is working or waiting on you — finish that turn first" });
       }
       let task = existing;
+      if (limiting && parsedLimit?.ok) {
+        const limited = store.setGroupTaskTurnTimeout(group.id, m[2], parsedLimit.minutes);
+        if (!limited) return json(res, 404, { error: "no such channel task" });
+        task = limited;
+      }
       if (pinning) {
         const pinned = store.setGroupTaskPinned(group.id, m[2], body.pinned === true);
         if (!pinned) return json(res, 404, { error: "no such channel task" });
@@ -21147,9 +21331,11 @@ const handleRequest = async (req: IncomingMessage, res: ServerResponse) => {
       }
       // patchBot persists first and emits the canonical bot change, which the
       // store listener above turns into the slim wire-format SSE broadcast.
+      // Every thread that follows the bot moves with it; the selected thread
+      // follows it from now on too, as if picked there.
       const bot = store.patchBot(existing.id, { modelSelection: checked.selection });
       if (!bot) return json(res, 404, { error: "no such bot" });
-      store.patchTask(bot.id, selected.threadId, { modelSelection: checked.selection,
+      store.patchTask(bot.id, selected.threadId, { modelSelection: undefined,
         ...hostedModels?.resetTask(selected.modelSelection, checked.selection) });
       return json(res, 200, { bot: wireBot(bot) });
     }
@@ -21810,7 +21996,9 @@ const handleRequest = async (req: IncomingMessage, res: ServerResponse) => {
       // the next turn on each thread follows the new setting. Person-set pins
       // and pins that already match stay; returning to Auto sweeps nothing.
       if (computerSpecified && requestedComputer !== undefined) store.clearAutoSurfacePins(m[1], requestedComputer);
-      if (normalizedSelection && selectedTask) store.patchTask(bot.id, selectedTask.threadId, { modelSelection: normalizedSelection,
+      // A new bot model moves every thread that follows the bot; the selected
+      // thread follows it from now on too.
+      if (normalizedSelection && selectedTask) store.patchTask(bot.id, selectedTask.threadId, { modelSelection: undefined,
         ...hostedModels?.resetTask(selectedTask.modelSelection, normalizedSelection) });
       if (existingBot && (bot.browserProfile !== beforeBrowserProfile || bot.browser !== beforeBrowserEnabled)) {
         browserLive.closeForBot(bot.id);
@@ -22550,12 +22738,15 @@ const handleRequest = async (req: IncomingMessage, res: ServerResponse) => {
       if (phoneSecretSubmissions.hasThread(bot.threadId)) {
         return json(res, 409, { error: "this task is securely saving a credential — try again when it finishes" });
       }
-      if (!registry.get(bot.modelSelection.instanceId)) {
+      // A thread's own model that can't run gives way to the bot's when the
+      // rerun starts (healThreadModel), so check the model it will run on.
+      const rerunSelection = turnSelection(bot.id, bot.threadId) ?? bot.modelSelection;
+      if (!registry.get(rerunSelection.instanceId)) {
         return json(res, 409, {
-          error: `provider instance "${bot.modelSelection.instanceId}" is unavailable — pick another model in settings`,
+          error: `provider instance "${rerunSelection.instanceId}" is unavailable — pick another model in settings`,
         });
       }
-      const rerunInstance = registry.get(bot.modelSelection.instanceId)!;
+      const rerunInstance = registry.get(rerunSelection.instanceId)!;
       const rerunRefusal = policyModelRefusal(rerunInstance);
       if (rerunRefusal) return json(res, 409, { error: rerunRefusal });
       // startTurn admits the rerun before branching. A shared-resource or
@@ -22950,7 +23141,7 @@ const handleRequest = async (req: IncomingMessage, res: ServerResponse) => {
       if (!task) return json(res, 500, { error: "couldn't create that task" });
       // Who opened it decides who may answer its cards on a shared workspace.
       if (auth.kind === "session") threadStarters.set(task.threadId, actorKey(auth));
-      return json(res, 201, { bot: publicBot(store.bot(bot.id)!), task: wireTask(task) });
+      return json(res, 201, { bot: publicBot(store.bot(bot.id)!), task: wireTask(task, store.bot(bot.id)!.modelSelection) });
     }
     m = path.match(/^\/api\/bots\/([\w-]+)\/tasks\/([\w-]+)$/);
     if (m && method === "POST") {
@@ -22965,7 +23156,7 @@ const handleRequest = async (req: IncomingMessage, res: ServerResponse) => {
       if (switchLimit === null) return json(res, 400, { error: "messages must be a non-negative whole number" });
       const switched = store.switchTask(bot.id, m[2]);
       if (!switched) return json(res, 404, { error: "no such task" });
-      const switchedSettings = { ...wireBot(switched), tasks: store.tasks(switched.id).map(wireTask) };
+      const switchedSettings = { ...wireBot(switched), tasks: store.tasks(switched.id).map((task) => wireTask(task, switched.modelSelection)) };
       // "0" is settings only, a positive page is a bounded transcript, and no
       // parameter is the whole thread — the one branch that materialises it.
       // Search results land through that branch (src/lib/focus-message.ts):
@@ -23035,7 +23226,7 @@ const handleRequest = async (req: IncomingMessage, res: ServerResponse) => {
         }
         const task = store.refreshTaskPermissions(profile.id, m[2]);
         if (!task) return json(res, 404, { error: "no such task" });
-        return json(res, 200, { task: wireTask(task), bot: publicBot(store.bot(profile.id)!) });
+        return json(res, 200, { task: wireTask(task, store.bot(profile.id)!.modelSelection), bot: publicBot(store.bot(profile.id)!) });
       }
       const patch: Parameters<typeof store.patchTask>[2] = {};
       if (body.projectId !== undefined) {
@@ -23116,7 +23307,7 @@ const handleRequest = async (req: IncomingMessage, res: ServerResponse) => {
         ? store.switchTaskModel(m[1], m[2], patch.modelSelection, body.updateBotDefault === true, body.resetApprovalToAsk === true,
           { ...patch, ...hostedModels?.resetTask(current.modelSelection, patch.modelSelection) })!
         : store.patchTask(m[1], m[2], patch)!;
-      return json(res, 200, { task: wireTask(task), bot: publicBot(store.bot(m[1])!) });
+      return json(res, 200, { task: wireTask(task, store.bot(m[1])!.modelSelection), bot: publicBot(store.bot(m[1])!) });
     }
     if (m && method === "DELETE") {
       const bot = store.bot(m[1]);
@@ -23175,7 +23366,7 @@ const handleRequest = async (req: IncomingMessage, res: ServerResponse) => {
         if (!title) return json(res, 502, { error: "couldn't generate a title — try again, or rename the thread" });
         const task = store.retitleTask(m[1], m[2], startedFrom, title) ?? store.taskByThread(m[1], m[2]);
         if (!task) return json(res, 404, { error: "no such task" });
-        return json(res, 200, { task: wireTask(task) });
+        return json(res, 200, { task: wireTask(task, store.bot(m[1])!.modelSelection) });
       } finally {
         titleRegenerations.delete(m[2]);
       }
@@ -23727,7 +23918,15 @@ const handleRequest = async (req: IncomingMessage, res: ServerResponse) => {
       if (key.length > 512) return json(res, 400, { error: "That does not look like an API key." });
       const url = typeof body?.url === "string" && body.url.trim() ? body.url.trim() : (saved && "url" in saved ? saved.url : undefined);
       res.setHeader("cache-control", "no-store");
-      return json(res, 200, await checkProviderKey({ provider: kind, key, url }));
+      const verdict = await checkProviderKey({ provider: kind, key, url });
+      // A Test is a real use the person chose: the engines on this key agree
+      // with its verdict. Claude runs its key through its CLI, not here.
+      if (kind !== "anthropic") {
+        const base = providerBaseUrl(kind, url);
+        if (verdict.ok) noteKeyAccepted(base, key);
+        else if (verdict.reason === "rejected") noteKeyRejected(base, key);
+      }
+      return json(res, 200, verdict);
     }
 
     if (method === "GET" && path === "/api/decisions") {
@@ -24717,6 +24916,12 @@ const handleRequest = async (req: IncomingMessage, res: ServerResponse) => {
         for (const request of browserCleanupRequests) browserCleanup.abort(request);
         throw error;
       }
+      // A saved or cleared key starts over: neither it nor the key it
+      // replaced stays marked as rejected.
+      const resetKeys = PROVIDER_KEY_KINDS.flatMap((kind) => {
+        const next = patch[kind]?.key;
+        return next === undefined ? [] : [cfg[kind]?.key, next];
+      });
       let configWriteCommitted = false;
       const externalSecretStorage = url.searchParams.get("secretStorage") === "external";
       try {
@@ -24767,6 +24972,7 @@ const handleRequest = async (req: IncomingMessage, res: ServerResponse) => {
         }
         throw error;
       }
+      for (const key of resetKeys) if (key) forgetKey(key);
       // Desktops already counting down move to the new window at once, in
       // every isolation mode; busy work still defers its expiry.
       if (patch.localVm?.idleTimeoutMinutes !== undefined) {
@@ -25340,7 +25546,7 @@ const handleRequest = async (req: IncomingMessage, res: ServerResponse) => {
   } catch (e) {
     const status = (e as any)?.status ?? 500;
     const candidateCode = (e as { code?: unknown })?.code;
-    const code = typeof candidateCode === "string" && ["guarded_busy", "guarded_branch", "guarded_permissions", "guarded_request_changed", "guarded_request_untracked"].includes(candidateCode)
+    const code = typeof candidateCode === "string" && ["guarded_busy", "guarded_branch", "guarded_permissions", "guarded_request_changed", "guarded_request_untracked", "outside_workspace"].includes(candidateCode)
       ? candidateCode : undefined;
     return json(res, status, { error: e instanceof Error ? e.message : String(e), ...(code ? { code } : {}) });
   } finally {
@@ -25485,12 +25691,21 @@ restoreChannelMessages();
   if (movedAutoPins) console.log(`Works on: moved ${movedAutoPins} auto-pinned thread(s) to their bot's current Works on`);
 }
 
-server.listen(PORT, "127.0.0.1", () => {
+server.listen(PORT, "127.0.0.1", async () => {
   companyRuntimeReady();
   console.log(`openmausbot server on http://127.0.0.1:${PORT}`);
+  // Words queued before the restart start first, ahead of anything sent from
+  // now on. Their turns wait for the engines read at start like every turn.
   followupsReady = true;
   drainQueuedSends();
   drainQueuedChannelSends();
+  // The work below wakes delegators, and a woken delegator keeps its session
+  // only on an engine that records what it was handed, which that read finds
+  // out: it starts once the read is done.
+  if (enginesRead) {
+    await enginesRead;
+    if (companyShutdown) return;
+  }
   // Startup work uses the same turn dispatcher and local tool endpoint as
   // ordinary chat. Start only once every registry is initialized and the
   // endpoint is listening; earlier dispatch can hit uninitialized bindings.
