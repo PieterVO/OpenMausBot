@@ -50,6 +50,8 @@ import com.openmausbot.companion.audio.LiveCallPhase
 import com.openmausbot.companion.audio.MicrophoneAccess
 import com.openmausbot.companion.core.Chat
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.launch
 
 /** What the bar's buttons do. A remote bar uses only [onHangUp]. */
@@ -320,17 +322,21 @@ fun LiveCallBarHost(chat: Chat, onSettings: () -> Unit, modifier: Modifier = Mod
     val session = environment.session
     val scope = rememberCoroutineScope()
     val local by liveCalls.state.collectAsState()
-    val state by session.state.collectAsState()
-    val server = state.liveCall
+    val serverCalls = remember(session) { session.state.map { it.liveCall }.distinctUntilChanged() }
+    val server by serverCalls.collectAsState(initial = session.state.value.liveCall)
     var now by remember { mutableStateOf(System.currentTimeMillis()) }
-    val ticking = local.phase == LiveCallPhase.LIVE || server?.isRunning == true
+    val model = LiveCallRules.barModel(local, server, chat.threadId, chat.name, now)
+    val ticking = when (model) {
+        is LiveCallBarModel.Local -> model.phase == LiveCallPhase.LIVE
+        is LiveCallBarModel.Remote -> true
+        LiveCallBarModel.Hidden -> false
+    }
     LaunchedEffect(ticking) {
         while (ticking) {
             now = System.currentTimeMillis()
             delay(1_000)
         }
     }
-    val model = LiveCallRules.barModel(local, server, chat.threadId, chat.name, now)
     if (model == LiveCallBarModel.Hidden) return
     LiveCallBar(
         model = model,

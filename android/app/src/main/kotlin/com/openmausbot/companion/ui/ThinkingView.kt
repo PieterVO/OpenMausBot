@@ -8,7 +8,6 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.relocation.BringIntoViewRequester
@@ -24,6 +23,8 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.layout.boundsInWindow
+import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.testTag
@@ -47,16 +48,22 @@ internal fun ThinkingView(reasoning: String, answering: Boolean = false) {
     var expanded by remember { mutableStateOf(false) }
     val start = remember { android.os.SystemClock.elapsedRealtime() }
     var seconds by remember { mutableLongStateOf(0L) }
+    var shown by remember { mutableStateOf(true) }
     LaunchedEffect(answering) {
-        // The answer reclaims the lane: an open panel folds into "Thought for
-        // Ns" the moment the reply starts, and that line can still reopen it.
-        if (answering) expanded = false
-        while (!answering) { seconds = (android.os.SystemClock.elapsedRealtime() - start) / 1000; delay(1000) }
+        // Capture elapsed time even when the clipped row's timer was paused;
+        // later scrolling must not change the finished duration or disclosure.
+        if (answering) {
+            expanded = false
+            seconds = (android.os.SystemClock.elapsedRealtime() - start) / 1000
+        }
+    }
+    LaunchedEffect(answering, shown) {
+        while (!answering && shown) { seconds = (android.os.SystemClock.elapsedRealtime() - start) / 1000; delay(1000) }
     }
     val moving = motionEnabled()
-    val pulse = rememberInfiniteTransition(label = "Thinking")
-    val alpha by pulse.animateFloat(0.45f, 1f, infiniteRepeatable(tween(800), RepeatMode.Reverse), label = "Thinking dot")
-    val shimmer by pulse.animateFloat(-1f, 2f, infiniteRepeatable(tween(1600, easing = LinearEasing)), label = "Thinking shimmer")
+    val pulse = if (moving && shown && !answering) rememberInfiniteTransition(label = "Thinking") else null
+    val alpha = pulse?.animateFloat(0.45f, 1f, infiniteRepeatable(tween(800), RepeatMode.Reverse), label = "Thinking dot")
+    val shimmer = pulse?.animateFloat(-1f, 2f, infiniteRepeatable(tween(1600, easing = LinearEasing)), label = "Thinking shimmer")
     val retained = remember(reasoning) { Reasoning.steps(reasoning).joinToString("\n\n") }
     val scroll = rememberScrollState()
     val bringIntoView = remember { BringIntoViewRequester() }
@@ -69,16 +76,26 @@ internal fun ThinkingView(reasoning: String, answering: Boolean = false) {
     LaunchedEffect(scroll, expanded) {
         if (expanded) snapshotFlow { scroll.maxValue }.collect { scroll.scrollTo(it) }
     }
-    Column(Modifier.fillMaxWidth(0.8f).animateContentSize(spring(dampingRatio = 0.82f, stiffness = 380f)), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+    Column(Modifier.fillMaxWidth(0.8f).onGloballyPositioned { shown = !it.boundsInWindow().isEmpty }
+        .animateContentSize(spring(dampingRatio = 0.82f, stiffness = 380f)), verticalArrangement = Arrangement.spacedBy(4.dp)) {
         Row(Modifier.fillMaxWidth().heightIn(min = 48.dp).testTag("thinking-row")
             .clickable(role = Role.Button) { expanded = !expanded }.semantics { stateDescription = if (expanded) "Expanded" else "Collapsed" },
             verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            if (!answering) Box(Modifier.size(8.dp).background(tint.ink.copy(alpha = if (moving) alpha else 1f), CircleShape))
+            if (!answering) androidx.compose.foundation.Canvas(Modifier.size(8.dp)) {
+                drawCircle(tint.ink.copy(alpha = alpha?.value ?: 1f))
+            }
             Text(if (answering) stringResource(R.string.mobile_chat_thought_for, seconds.toInt()) else localizedMobileCopy("Thinking"),
-                style = if (answering) MaterialTheme.typography.labelMedium else MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.Medium,
-                    brush = if (moving) Brush.linearGradient(listOf(tint.ink.copy(alpha = 0.65f), tint.ink, tint.ink.copy(alpha = 0.65f)),
-                        start = androidx.compose.ui.geometry.Offset(shimmer * 130f, 0f), end = androidx.compose.ui.geometry.Offset((shimmer + 1f) * 130f, 0f)) else null),
-                color = if (answering) secondaryTint else if (moving) Color.Unspecified else tint.ink, modifier = Modifier.weight(1f))
+                style = if (answering) MaterialTheme.typography.labelMedium else MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.Medium),
+                color = if (answering) secondaryTint else if (shimmer != null) Color.White else tint.ink,
+                modifier = Modifier.weight(1f).then(if (shimmer != null) Modifier
+                    .graphicsLayer { compositingStrategy = CompositingStrategy.Offscreen }
+                    .drawWithContent {
+                        drawContent()
+                        val phase = shimmer.value
+                        drawRect(Brush.linearGradient(listOf(tint.ink.copy(alpha = 0.65f), tint.ink, tint.ink.copy(alpha = 0.65f)),
+                            start = androidx.compose.ui.geometry.Offset(phase * 130f, 0f),
+                            end = androidx.compose.ui.geometry.Offset((phase + 1f) * 130f, 0f)), blendMode = BlendMode.SrcIn)
+                    } else Modifier))
             if (!answering) Text("${seconds}s", style = MaterialTheme.typography.labelSmall.copy(fontFeatureSettings = "tnum"), color = secondaryTint)
             Icon(Icons.Filled.KeyboardArrowDown, null, tint = secondaryTint, modifier = Modifier.size(16.dp))
         }

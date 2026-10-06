@@ -2,6 +2,7 @@ package com.openmausbot.companion.ui
 
 import androidx.activity.ComponentActivity
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.SemanticsActions
@@ -13,6 +14,7 @@ import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.unit.sp
+import com.openmausbot.companion.core.MarkdownBlock
 import org.junit.Assert.*
 import org.junit.Rule
 import org.junit.Test
@@ -43,6 +45,31 @@ class MarkdownConversationTest {
         assertEquals(FontWeight.Bold, style.fontWeight)
         assertEquals(16.sp * 0.94f, style.fontSize)
         assertTrue(style.textDecoration?.contains(TextDecoration.LineThrough) == true)
+    }
+
+    @Test fun caretOpacityChangesKeepBodyLayoutAndAccessibleText() {
+        compose.mainClock.autoAdvance = false
+        val opacity = mutableFloatStateOf(1f)
+        val blocks = listOf(MarkdownBlock.Paragraph("A reply"))
+        compose.setContent { MaterialTheme {
+            MarkdownBlocks(blocks, Modifier.testTag("caret-reply"), caret = true, caretAlpha = { opacity.floatValue })
+        } }
+        compose.mainClock.advanceTimeByFrame()
+        val before = caretLayout()
+        assertEquals("A reply ▍", before.layoutInput.text.text)
+        compose.runOnIdle { opacity.floatValue = 0.35f }
+        compose.mainClock.advanceTimeByFrame()
+        val after = caretLayout()
+        assertSame(before.layoutInput.text, after.layoutInput.text)
+        assertEquals(before.size, after.size)
+        compose.onNodeWithText("A reply ▍", substring = false).assertExists()
+    }
+
+    private fun caretLayout(): TextLayoutResult {
+        val results = mutableListOf<TextLayoutResult>()
+        compose.onNodeWithText("A reply ▍", substring = false).fetchSemanticsNode()
+            .config[SemanticsActions.GetTextLayoutResult].action!!.invoke(results)
+        return results.single()
     }
 
     private fun codeLayout(text: String): TextLayoutResult {

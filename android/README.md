@@ -62,6 +62,124 @@ or touch-performance evidence. The normal suite keeps capture output disabled.
 The one-pixel padding accommodates odd native viewport dimensions for H.264
 without rescaling the xxhdpi captures.
 
+### Responsiveness sweep (2026-10-06)
+
+Measured on the arm64 macOS host with JDK 17; these are JVM/Robolectric results,
+not physical-phone frame times or keyboard-latency claims.
+
+**Real-chat recompositions.** `ChatPerformanceTest` mounts the actual `ChatScreen`
+and `Session` against a synthetic fleet/loopback server, with six visible settled
+messages. A debug-only, inline `SideEffect` probe counts both settled row
+presentation and `MessageRow` bodies; its callback and lazy key expression are
+absent from the constant-false release branch. Each typed character/network
+frame/caption update is rendered before the next one. Motion is disabled to
+isolate event-driven recomposition from intentional live animation.
+
+| Scenario | Settled rows before → after | Message bodies before → after | Live item before → after |
+| --- | ---: | ---: | ---: |
+| Type 40 composer characters | 0 → 0 | 0 → 0 | 0 → 0 |
+| 200 open-thread `content.delta` frames | 1,200 → 0 | 1,200 → 0 | 200 → 200 |
+| 200 frames across eight other bots/threads | 1,200 → 0 | 1,200 → 0 | 200 → 0 |
+| 200 Live call output-caption deltas | 0 → 0 | 0 → 0 | 0 → 0 |
+
+Typing and captions were already isolated in this fixture. The measured fix is
+eliminating transcript-wide fan-out from both the open stream and a busy fleet.
+The regression test requires zero settled-row/body recompositions in all four
+scenarios and requires the live item to consume the open stream.
+
+**Fold CPU medians.** The fixed workload has 20 turns / 200 messages, including
+120 tool inputs with 4,096 ASCII padding characters plus JSON framing; Updates
+uses 24 such threads. Both before and after use 100 warmups and the median of
+15 samples × 50 operations, consume results through a volatile sink, and assert
+functional results. Values below are microseconds per operation. The preview
+fixture deliberately ends in a relevant text message, so its tail scan is very
+short; that speedup is not a promise for every possible transcript shape.
+
+| Fold / activity detail | Before (µs) | After (µs) |
+| --- | ---: | ---: |
+| `transcriptRows` / full | 102.235 | 52.467 |
+| `transcriptRows` / reduced | 108.755 | 42.875 |
+| `transcriptRows` / hidden | 94.097 | 43.605 |
+| `liveNarration` / hidden | 4.262 | 1.495 |
+| `rosterPreview` / full | 68.494 | 0.081 |
+| `rosterPreview` / reduced | 61.403 | 0.035 |
+| `rosterPreview` / hidden | 54.236 | 0.051 |
+| Updates aggregation / full | 939.378 | 15.565 |
+| Updates aggregation / reduced | 693.535 | 14.922 |
+| Updates aggregation / hidden | 649.234 | 12.518 |
+
+**Changes and evidence.**
+
+- [ChatScreen.kt](app/src/main/kotlin/com/openmausbot/companion/ui/ChatScreen.kt)
+  retains resolved chat identity, keys transcript derivation on the selected
+  thread's messages/leaf/edit, derives jump visibility, and gives settled rows
+  their own skippable composition boundary.
+  [MessageRow.kt](app/src/main/kotlin/com/openmausbot/companion/ui/MessageRow.kt)
+  observes distinct thread-version/pending-edit/run-reference projections,
+  rather than every session frame.
+- [ChatPreferences.kt](core/src/main/kotlin/com/openmausbot/companion/core/ChatPreferences.kt)
+  reverse-scans previews and scans only the latest narration turn.
+  [Models.kt](core/src/main/kotlin/com/openmausbot/companion/core/Models.kt) and
+  [DigestPresentation.kt](core/src/main/kotlin/com/openmausbot/companion/core/DigestPresentation.kt)
+  memoize digest visibility without changing message serialization/equality.
+  [Chat.kt](core/src/main/kotlin/com/openmausbot/companion/core/Chat.kt),
+  [RosterScreen.kt](app/src/main/kotlin/com/openmausbot/companion/ui/RosterScreen.kt),
+  [Updates.kt](app/src/main/kotlin/com/openmausbot/companion/ui/Updates.kt), and
+  [UpdatesSheet.kt](app/src/main/kotlin/com/openmausbot/companion/ui/UpdatesSheet.kt)
+  reuse screen-owned per-thread previews, pending cards, branches, and faces.
+  Counting-list regressions prove 200 busy-fleet frames perform zero additional
+  unchanged-transcript reads. The navigator already composes only its current
+  screen, so offscreen roster screens do not collect or animate.
+- [Markdown.kt](core/src/main/kotlin/com/openmausbot/companion/core/Markdown.kt)
+  retains settled parsed blocks and reparses only the unresolved tail, using
+  the same parser as full rendering. Every-prefix equivalence covers 17
+  fixtures and 400 adjacent syntax pairs, plus rewind/replacement/reset and
+  partial-marker mode changes.
+  [MarkdownText.kt](app/src/main/kotlin/com/openmausbot/companion/ui/MarkdownText.kt)
+  reads caret opacity in a glyph `graphicsLayer`; opacity changes preserve
+  accessible text and body layout.
+  [StreamingMotion.kt](app/src/main/kotlin/com/openmausbot/companion/ui/StreamingMotion.kt),
+  [ThinkingView.kt](app/src/main/kotlin/com/openmausbot/companion/ui/ThinkingView.kt),
+  and [PlanViews.kt](app/src/main/kotlin/com/openmausbot/companion/ui/PlanViews.kt)
+  narrow frame-state reads. Thinking/plan infinite animations stop when inactive,
+  motion-disabled, or clipped offscreen; mascot/working arcs already had visibility
+  gating. Thinking's paused timer still captures the correct
+  finished duration and preserves reopened disclosure state.
+- [LiveCallManager.kt](app/src/main/kotlin/com/openmausbot/companion/audio/LiveCallManager.kt)
+  owns/cancels queued and suspended media jobs, guards late attempts/computer
+  changes, releases media on owner cancellation, and cancels bounded server
+  cleanup on confirmation or an eight-second timeout. Twelve added lifecycle
+  regressions exercise concrete job cancellation, exactly-once audio/transport
+  release, and stale callbacks/responses.
+  [LiveCallBar.kt](app/src/main/kotlin/com/openmausbot/companion/ui/LiveCallBar.kt)
+  observes only the server call and ticks only a visible running bar.
+  App-scoped server/link collectors intentionally remain between calls; an
+  already-posted, bounded start request retains its late-response cleanup path.
+
+Compose compiler metrics/reports were temporarily enabled through
+`companion.composeReports`. The debug report marked `MessageRow`, `TextBubble`,
+`PlanCard`, `ChatHeader`, roster `ChatRow`, and `StepBadge` **skippable**.
+Protocol `Chat`/`Message`/plan/summary parameters remain cross-module unstable;
+retaining their identities and remembered collections avoids falsely declaring
+ordinary Kotlin lists immutable. `StepBadge` inputs were already stable;
+`PacedText` now exposes only observable snapshot state and private cursor fields.
+The temporary metrics configuration was removed.
+
+Reproduce the measurements (numeric output is in Gradle test-result XML
+`system-out`):
+
+```sh
+./gradlew --no-daemon :core:test --tests '*FoldMicrobenchmarkTest' \
+  :app:testDebugUnitTest --tests '*UpdatesMicrobenchmarkTest' --tests '*ChatPerformanceTest'
+```
+
+Final acceptance: `./gradlew --no-daemon :core:test :app:testDebugUnitTest
+:app:assembleDebug` succeeded, with **890 core tests + 1,195 app tests**, zero
+failures/skips, and the debug APK assembled. Existing behavior, tags, and
+semantics remain regression-covered. Not exercised: physical-device refresh
+rates/input latency, actual microphone/WebRTC hardware, or a production Live
+call; the call/recomposition evidence uses isolated fake media and loopback.
+
 ## Installable threads preview
 
 ```sh

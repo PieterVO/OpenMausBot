@@ -137,17 +137,42 @@ sealed interface TranscriptRow {
  * most of them — one per chat, on the screen they spend the most time on. Reading the preview off
  * the raw last message made "Hidden" mean "hidden in one place".
  */
-fun rosterPreview(messages: List<Message>, detail: ActivityDetail): String =
-    // Plans remain tool activity in previews, not the transcript's persistent card.
-    when (val last = foldedTranscriptRows(messages, detail, showSummaries = false, showPlans = false)
-        .lastOrNull { it.kind != Message.Kind.DIGEST }) {
-        null -> ""
-        is TranscriptRow.Single -> previewText(last.message)
-        is TranscriptRow.ActivityRun ->
-            "${if (last.running) "Running" else "Ran"} ${last.items.size} steps"
-        is TranscriptRow.AssistantTurn -> last.label
-        is TranscriptRow.Plan -> previewText(last.message)
+fun rosterPreview(messages: List<Message>, detail: ActivityDetail): String {
+    // Only the tail is needed. A completed narration fold always precedes its
+    // visible final reply, so it cannot be the last non-summary row. Plans stay
+    // ordinary activity here, rather than the transcript's persistent card.
+    var steps = 0
+    var running = false
+    var lastStep: Message? = null
+    for (index in messages.indices.reversed()) {
+        val message = messages[index]
+        if (message.kind == Message.Kind.DIGEST) {
+            // A visible problem summary breaks a reduced run even though the
+            // preview itself reads past summaries. Hidden healthy summaries do not.
+            if (steps > 0 && shouldShowDigest(message, showSummaries = false)) break
+            continue
+        }
+        if (detail == ActivityDetail.HIDDEN &&
+            (message.kind == Message.Kind.ACTIVITY || message.kind == Message.Kind.COMPACTION) &&
+            !isStatusNotice(message) && !isFailedTurn(message)
+        ) continue
+        if (detail == ActivityDetail.REDUCED && message.kind == Message.Kind.ACTIVITY &&
+            message.tool?.ok != false && !isStatusNotice(message)
+        ) {
+            if (lastStep == null) lastStep = message
+            steps++
+            if (message.tool?.ok == null) running = true
+        } else {
+            if (steps > 0) break
+            return previewText(message)
+        }
     }
+    return when (steps) {
+        0 -> ""
+        1 -> previewText(checkNotNull(lastStep))
+        else -> "${if (running) "Running" else "Ran"} $steps steps"
+    }
+}
 
 /** What a single message reads as in a roster row. */
 internal fun previewText(message: Message): String = when (message.kind) {
@@ -231,13 +256,31 @@ data class LiveNarration(
  */
 fun liveNarration(messages: List<Message>, busy: Boolean, detail: ActivityDetail): LiveNarration {
     if (!busy || detail != ActivityDetail.HIDDEN) return LiveNarration.NONE
-    val lastUser = messages.indexOfLast { it.role == Message.Role.USER }
-    val said = messages.drop(lastUser + 1)
-        .filter { it.role == Message.Role.BOT && it.kind == Message.Kind.TEXT && !it.turnId.isNullOrEmpty() }
-    val turn = said.lastOrNull()?.turnId ?: return LiveNarration.NONE
-    val narration = said.filter { it.turnId == turn }
-    if (narration.any { it.turnTerminal == true }) return LiveNarration.NONE
-    return LiveNarration(narration.map { it.id }.toSet(), narration.lastOrNull()?.text)
+    var start = 0
+    var turn: String? = null
+    var latest: String? = null
+    for (index in messages.indices.reversed()) {
+        val message = messages[index]
+        if (message.role == Message.Role.USER) {
+            start = index + 1
+            break
+        }
+        if (turn == null && message.role == Message.Role.BOT && message.kind == Message.Kind.TEXT &&
+            !message.turnId.isNullOrEmpty()
+        ) {
+            turn = message.turnId
+            latest = message.text
+        }
+    }
+    if (turn == null) return LiveNarration.NONE
+    val ids = linkedSetOf<String>()
+    for (index in start until messages.size) {
+        val message = messages[index]
+        if (message.role != Message.Role.BOT || message.kind != Message.Kind.TEXT || message.turnId != turn) continue
+        if (message.turnTerminal == true) return LiveNarration.NONE
+        ids.add(message.id)
+    }
+    return LiveNarration(ids, latest)
 }
 
 /**
@@ -248,34 +291,29 @@ fun transcriptRows(
     messages: List<Message>,
     detail: ActivityDetail,
     showSummaries: Boolean = false,
-): List<TranscriptRow> = foldedTranscriptRows(messages, detail, showSummaries, showPlans = true)
-
-private fun foldedTranscriptRows(
-    messages: List<Message>,
-    detail: ActivityDetail,
-    showSummaries: Boolean,
-    showPlans: Boolean,
 ): List<TranscriptRow> {
-    val plans = if (showPlans) planStates(messages) else emptyMap()
-    val planGroups = mutableMapOf<String, MutableList<Message>>()
-    var userGroup = "before-user"
-    for (message in messages) {
-        if (message.role == Message.Role.USER) userGroup = "user.${message.id}"
-        if (message.id !in plans) continue
-        val group = message.turnId?.takeIf { it.isNotEmpty() }?.let { "turn.$it" } ?: userGroup
-        planGroups.getOrPut(group) { mutableListOf() }.add(message)
-    }
+    val plans = planStates(messages)
     val planRows = mutableMapOf<String, TranscriptRow.Plan>()
-    for (items in planGroups.values) {
-        val first = items.first()
-        val latest = items.last()
-        planRows[first.id] = TranscriptRow.Plan(
-            id = "plan.${first.id}",
-            message = latest,
-            plan = plans.getValue(latest.id),
-            messageIds = items.mapTo(mutableSetOf()) { it.id },
-            at = first.at,
-        )
+    if (plans.isNotEmpty()) {
+        val planGroups = mutableMapOf<String, MutableList<Message>>()
+        var userGroup = "before-user"
+        for (message in messages) {
+            if (message.role == Message.Role.USER) userGroup = "user.${message.id}"
+            if (message.id !in plans) continue
+            val group = message.turnId?.takeIf { it.isNotEmpty() }?.let { "turn.$it" } ?: userGroup
+            planGroups.getOrPut(group) { mutableListOf() }.add(message)
+        }
+        for (items in planGroups.values) {
+            val first = items.first()
+            val latest = items.last()
+            planRows[first.id] = TranscriptRow.Plan(
+                id = "plan.${first.id}",
+                message = latest,
+                plan = plans.getValue(latest.id),
+                messageIds = items.mapTo(mutableSetOf()) { it.id },
+                at = first.at,
+            )
+        }
     }
     // Only a server completion marker makes narration foldable. Legacy and
     // unfinished turns stay visible, matching desktop and iOS.
@@ -291,9 +329,9 @@ private fun foldedTranscriptRows(
         if (message.turnTerminal == true) {
             val items = narration.remove(turnId)?.takeIf { it.isNotEmpty() } ?: continue
             folds[items.first().id] = TranscriptRow.AssistantTurn(
-                turnId, items.toList(), (message.at - (startedAt[turnId] ?: items.first().at)).coerceAtLeast(0.0),
+                turnId, items, (message.at - (startedAt[turnId] ?: items.first().at)).coerceAtLeast(0.0),
             )
-            hiddenIds.addAll(items.map { it.id })
+            for (item in items) hiddenIds.add(item.id)
         } else {
             if (turnId !in narration) startedAt[turnId] = lastUserAt ?: message.at
             narration.getOrPut(turnId) { mutableListOf() }.add(message)

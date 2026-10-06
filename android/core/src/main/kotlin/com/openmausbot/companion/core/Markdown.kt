@@ -19,11 +19,70 @@ sealed interface MarkdownBlock {
 }
 
 object Markdown {
-    fun blocks(source: String): List<MarkdownBlock> {
+    fun blocks(source: String): List<MarkdownBlock> = parse(source, emptyList())
+
+    /**
+     * Keeps immutable blocks and their list context; only the unresolved suffix
+     * goes through the same parser as [blocks]. The received source may stay the
+     * same while the reveal endpoint advances, avoiding a prefix comparison on every frame.
+     */
+    class Incremental {
+        private var previousSource = ""
+        private var previousEnd = 0
+        private var previousClosing = false
+        private var previousBlocks: List<MarkdownBlock> = emptyList()
+        private val settled = mutableListOf<MarkdownBlock>()
+        private var listIndents: List<Int> = emptyList()
+        internal var settledSourceLength = 0
+            private set
+
+        fun blocks(source: String, end: Int = source.length, closePartial: Boolean = false): List<MarkdownBlock> {
+            require(end in 0..source.length)
+            val sameSource = source === previousSource
+            if (sameSource && end == previousEnd && closePartial == previousClosing) return previousBlocks
+            if (end < previousEnd || (closePartial && !previousClosing) ||
+                (!sameSource && !source.regionMatches(0, previousSource, 0, previousEnd))) {
+                settled.clear()
+                listIndents = emptyList()
+                settledSourceLength = 0
+            }
+            val tail = source.substring(settledSourceLength, end)
+            val closed = if (closePartial) StreamingText.closeMarkdownTail(tail) else null
+            val checkpointLimit = closed?.settledEnd ?: tail.length
+            var checkpointEnd = 0
+            var checkpointCount = 0
+            val checkpointIndents = mutableListOf<Int>()
+            val parsed = parse(closed?.text ?: tail, listIndents) { offset, count, indents ->
+                if (offset <= checkpointLimit && offset <= tail.length) {
+                    checkpointEnd = offset
+                    checkpointCount = count
+                    checkpointIndents.clear()
+                    checkpointIndents.addAll(indents)
+                }
+            }
+            val result = if (settled.isEmpty()) parsed else settled + parsed
+            if (checkpointEnd > 0) {
+                settled.addAll(parsed.subList(0, checkpointCount))
+                settledSourceLength += checkpointEnd
+                listIndents = checkpointIndents
+            }
+            previousSource = source
+            previousEnd = end
+            previousClosing = closePartial
+            previousBlocks = result
+            return result
+        }
+    }
+
+    private fun parse(
+        source: String,
+        initialListIndents: List<Int>,
+        checkpoint: ((offset: Int, blockCount: Int, listIndents: List<Int>) -> Unit)? = null,
+    ): List<MarkdownBlock> {
         val blocks = mutableListOf<MarkdownBlock>()
         val paragraph = mutableListOf<String>()
         // Open list markers prevent an indented continuation becoming a table.
-        val listIndents = mutableListOf<Int>()
+        val listIndents = initialListIndents.toMutableList()
 
         fun closeLists(line: String) {
             val leading = leadingCount(line)
@@ -42,8 +101,28 @@ object Markdown {
             .replace("\r\n", "\n")
             .replace("\r", "\n")
             .split('\n')
+        // Offsets remain in the original UTF-16 source, including CRLF. Full
+        // parsing does not need them; the incremental path scans only its tail.
+        val starts = if (checkpoint != null) IntArray(lines.size).also { offsets ->
+            var lineIndex = 1
+            var character = 0
+            while (character < source.length) {
+                val value = source[character++]
+                if (value == '\r') {
+                    if (character < source.length && source[character] == '\n') character++
+                    offsets[lineIndex++] = character
+                } else if (value == '\n') {
+                    offsets[lineIndex++] = character
+                }
+            }
+        } else null
         var index = 0
         while (index < lines.size) {
+            // A complete next line is required: a partial non-row may still
+            // become a table row/delimiter, and prose may still join a paragraph.
+            if (index < lines.lastIndex && paragraph.isEmpty() && starts != null) {
+                checkpoint?.invoke(starts[index], blocks.size, listIndents)
+            }
             val line = lines[index++]
             val trimmed = line.trim()
 

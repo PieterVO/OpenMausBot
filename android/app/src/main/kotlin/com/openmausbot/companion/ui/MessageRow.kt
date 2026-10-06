@@ -131,6 +131,9 @@ import com.openmausbot.companion.core.TranscriptCards
 import com.openmausbot.companion.core.webhookContent
 import com.openmausbot.companion.core.StreamingText
 import kotlinx.coroutines.flow.collectLatest
+import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.distinctUntilChangedBy
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
@@ -163,10 +166,10 @@ fun MessageRow(
     /** An isolated row is a run start; transcript callers pass the actual boundary. */
     showSender: Boolean = true,
 ) {
+    RecompositionProbe { "message:${message.id}" }
     val session = LocalCompanion.current.session
     val scope = rememberCoroutineScope()
     val haptics = rememberHaptics()
-    val state by session.state.collectAsState()
     val clipboard = LocalClipboard.current
     var menuOpen by remember { mutableStateOf(false) }
     var editing by remember { mutableStateOf(false) }
@@ -176,11 +179,24 @@ fun MessageRow(
     var showingDigest by remember(message.id) { mutableStateOf(false) }
 
     val bot = (chat as? Chat.BotChat)?.bot
-    val versions = remember(state, message.id) { state.versions(message, chat.threadId) }
+    // Runtime deltas do not change versions. Filter the thread's source before
+    // folding it, rather than subscribing every visible row to the whole fleet.
+    val versions = if (message.role == Message.Role.USER && message.kind == Message.Kind.TEXT) {
+        val initial = remember(session, chat.threadId, message.id, message.parentId) {
+            session.state.value.versions(message, chat.threadId)
+        }
+        val current by remember(session, chat.threadId, message.id, message.parentId) {
+            session.state.distinctUntilChangedBy { it.messages[chat.threadId] }
+                .map { it.versions(message, chat.threadId) }
+        }.collectAsState(initial = initial)
+        current
+    } else emptyList()
     val versionIndex = versions.indexOfFirst { it.id == message.id }
     // The stand-in for an edit the computer has not answered yet. It has no
     // server identity, so nothing may react to it or edit it again.
-    val editPending = state.pendingEdits[chat.threadId]
+    val editPending by remember(session, chat.threadId) {
+        session.state.map { it.pendingEdits[chat.threadId] }.distinctUntilChanged()
+    }.collectAsState(initial = session.state.value.pendingEdits[chat.threadId])
     val isPendingEdit = editPending?.placeholderId == message.id
     val mine = message.role == Message.Role.USER
     val requestedReveal = LocalTextArrival.current
@@ -211,8 +227,12 @@ fun MessageRow(
             verticalArrangement = Arrangement.spacedBy(6.dp),
         ) {
             // Only a thread the phone knows gets an "Open run" button.
-            val runRef = remember(state, message.routineRun?.executionThreadId) {
-                message.routineRun?.let { state.routineExecutionRef(it) }
+            val runRef = message.routineRun?.let { run ->
+                val ref by remember(session, run) {
+                    session.state.distinctUntilChangedBy { it.bots }
+                        .map { it.routineExecutionRef(run) }.distinctUntilChanged()
+                }.collectAsState(initial = session.state.value.routineExecutionRef(run))
+                ref
             }
             CompositionLocalProvider(LocalPacedMessage provides paced) {
             MessageContent(
@@ -551,10 +571,10 @@ private fun TextBubble(
     val tail = TranscriptLayout.tail(message, endsRun)
     val paced = LocalPacedMessage.current
     val visible = paced?.visible ?: message.text.orEmpty()
-    val source = remember(message.text, visible, paced?.revealing) {
-        val prefix = if (paced != null) StreamingText.revealedPrefix(message.text.orEmpty(), visible.length, final = true) else visible
-        if (paced?.revealing == true) StreamingText.closePartialMarkdown(prefix) else prefix
+    val revealEnd = remember(message.text, visible) {
+        if (paced != null) StreamingText.revealedEnd(message.text.orEmpty(), visible.length, final = true) else visible.length
     }
+    val markdown = remember(message.id) { Markdown.Incremental() }
     val revealBubble = LocalTextArrival.current && !touchExplorationEnabled()
     val fade = remember(message.id) { Animatable(if (revealBubble) 0f else 1f) }
     LaunchedEffect(message.id, paced?.motion, revealBubble) {
@@ -563,7 +583,11 @@ private fun TextBubble(
     }
     // A patch still has its dedicated card; Markdown owns both embedded and whole tables.
     val card = remember(message.id, message.role, message.text) { if (mine) null else TranscriptCards.diff(message.text.orEmpty()) }
-    val blocks = remember(source, mine, card) { if (mine || card != null) emptyList() else Markdown.blocks(source) }
+    val blocks = remember(message.text, revealEnd, paced?.revealing, mine, card) {
+        if (mine || card != null) emptyList()
+        else if (paced != null) markdown.blocks(message.text.orEmpty(), revealEnd, closePartial = paced.revealing)
+        else Markdown.blocks(visible)
+    }
     val hasTable = blocks.any { it is MarkdownBlock.Table }
     // Shared attachments are protocol tags in stored user text. They are not
     // prose, and a server-controlled path must never be presented as a link.
@@ -1447,18 +1471,20 @@ fun StreamingBubble(text: String?, reasoning: String?) {
     val paced = rememberPacedText(text.orEmpty(), streamOpen = !text.isNullOrEmpty())
     val recordVisible = LocalLiveTextVisibility.current
     DisposableEffect(recordVisible) { onDispose { recordVisible(false) } }
-    val source = remember(text, paced.visible) {
-        StreamingText.closePartialMarkdown(StreamingText.revealedPrefix(text.orEmpty(), paced.visible.length, final = false))
+    val markdown = remember { Markdown.Incremental() }
+    val revealEnd = remember(text, paced.visible) {
+        StreamingText.revealedEnd(text.orEmpty(), paced.visible.length, final = false)
     }
-    SideEffect { recordVisible(source.isNotBlank()) }
-    val blocks = remember(source) { Markdown.blocks(source) }
+    val hasVisibleText = remember(text, revealEnd) { (0 until revealEnd).any { !text.orEmpty()[it].isWhitespace() } }
+    SideEffect { recordVisible(hasVisibleText) }
+    val blocks = remember(text, revealEnd) { markdown.blocks(text.orEmpty(), revealEnd, closePartial = true) }
     val hasTable = blocks.any { it is MarkdownBlock.Table }
     Column(Modifier.fillMaxWidth().testTag("streaming-bubble").semantics { pacedText(paced) }) {
         if (!reasoning.isNullOrEmpty()) ThinkingView(reasoning, answering = !text.isNullOrEmpty())
         if (!text.isNullOrEmpty()) Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.Bottom) {
             Column(Modifier.weight(1f, fill = false).widthIn(max = 640.dp).padding(bottom = SpeechBubble.tailDrop())
                 .background(chatTint.theirs, SpeechBubbleShape.of(BubbleTail.LEADING)).padding(horizontal = 14.dp, vertical = 9.dp)) {
-                MarkdownBlocks(blocks, caret = true, settling = paced.revealing && paced.motion, caretAlpha = paced.caretAlpha)
+                MarkdownBlocks(blocks, caret = true, settling = paced.revealing && paced.motion, caretAlpha = paced.caretOpacity)
             }
             Spacer(Modifier.fillMaxWidth(if (hasTable) 0.08f else 0.20f))
         }

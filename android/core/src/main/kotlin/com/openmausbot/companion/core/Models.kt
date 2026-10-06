@@ -261,6 +261,14 @@ data class Message(
     @Serializable(with = OptionalWireBooleanSerializer::class)
     val turnSucceeded: Boolean? = null,
 ) {
+    /** A harmless first-read race can only compute the same immutable enum twice. */
+    @kotlinx.serialization.Transient
+    @Volatile
+    private var cachedDigestVisibility: DigestVisibility? = null
+
+    internal fun digestVisibility(): DigestVisibility = cachedDigestVisibility
+        ?: computeDigestVisibility(this).also { cachedDigestVisibility = it }
+
     @Serializable(with = MessageKindSerializer::class)
     enum class Kind { TEXT, OPTIONS, ACTIVITY, SCREEN, DIGEST, COMPACTION, ROUTINE_RUN, UNKNOWN }
 

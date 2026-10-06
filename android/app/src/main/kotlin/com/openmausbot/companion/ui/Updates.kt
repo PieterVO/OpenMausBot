@@ -2,15 +2,16 @@ package com.openmausbot.companion.ui
 
 import androidx.compose.runtime.Immutable
 import com.openmausbot.companion.core.ActivityDetail
+import com.openmausbot.companion.core.Bot
 import com.openmausbot.companion.core.Chat
 import com.openmausbot.companion.core.CompanionState
 import com.openmausbot.companion.core.Message
 import com.openmausbot.companion.core.OptionCard
 import com.openmausbot.companion.core.PendingApproval
 import com.openmausbot.companion.core.forTask
+import com.openmausbot.companion.core.ThreadProjectionCache
 import com.openmausbot.companion.core.isStatusNotice
 import com.openmausbot.companion.core.label
-import com.openmausbot.companion.core.rosterPreview
 import com.openmausbot.companion.core.takeLastCharacters
 import com.openmausbot.companion.core.visibleTasks
 
@@ -42,15 +43,21 @@ internal data class ChatUpdate(
  * Activity setting: the lines fold tool calls and webhooks by the same rule as
  * the roster, so Hidden means hidden here too (MOCA-204, as on iOS).
  */
-internal fun CompanionState.updates(detail: ActivityDetail): List<ChatUpdate> =
-    updates(pendingApprovals, detail)
+internal fun CompanionState.updates(
+    detail: ActivityDetail,
+    projections: ThreadProjectionCache = ThreadProjectionCache(),
+): List<ChatUpdate> = updates(projections.pendingApprovals(this), detail, projections)
 
 /**
  * The same derivation for a caller that already holds the pending approvals.
  * [CompanionState.pendingApprovals] walks every thread's visible transcript, and
  * the roster reads it for its own rows on the frame it draws the pill.
  */
-internal fun CompanionState.updates(pending: List<PendingApproval>, detail: ActivityDetail): List<ChatUpdate> {
+internal fun CompanionState.updates(
+    pending: List<PendingApproval>,
+    detail: ActivityDetail,
+    projections: ThreadProjectionCache = ThreadProjectionCache(),
+): List<ChatUpdate> {
     val out = mutableListOf<ChatUpdate>()
     val seen = mutableSetOf<String>()
 
@@ -85,32 +92,32 @@ internal fun CompanionState.updates(pending: List<PendingApproval>, detail: Acti
                         if (held == 1) "Queued — waiting for an available slot" else "$held messages queued",
                     )
                 conversation.busy == true ->
-                    out += ChatUpdate(chat, UpdateKind.WORKING, workingLine(chat.threadId, detail))
+                    out += ChatUpdate(chat, UpdateKind.WORKING, workingLine(chat.threadId, detail, projections))
                 conversation.unread ->
-                    out += ChatUpdate(chat, UpdateKind.TO_REVIEW, lastLine(chat.threadId, detail))
+                    out += ChatUpdate(chat, UpdateKind.TO_REVIEW, projections.thread(this, chat.threadId).preview(detail))
             }
         }
     }
 
-        for (room in rooms) {
-            val chat = Chat.RoomChat(room)
-            if (chat.conversationId in seen) continue
-            val held = pendingQueued[room.threadId]?.size ?: 0
-            when {
-                held > 0 -> {
-                    seen += chat.conversationId
-                    out += ChatUpdate(
-                        chat, UpdateKind.WORKING,
-                        if (held == 1) "Queued — waiting for an available slot" else "$held messages queued",
-                    )
-                }
-                room.busyBotId != null -> {
+    for (room in rooms) {
+        val chat = Chat.RoomChat(room)
+        if (chat.conversationId in seen) continue
+        val held = pendingQueued[room.threadId]?.size ?: 0
+        when {
+            held > 0 -> {
                 seen += chat.conversationId
-                out += ChatUpdate(chat, UpdateKind.WORKING, workingLine(room.threadId, detail))
+                out += ChatUpdate(
+                    chat, UpdateKind.WORKING,
+                    if (held == 1) "Queued — waiting for an available slot" else "$held messages queued",
+                )
+            }
+            room.busyBotId != null -> {
+                seen += chat.conversationId
+                out += ChatUpdate(chat, UpdateKind.WORKING, workingLine(room.threadId, detail, projections))
             }
             room.unread -> {
                 seen += chat.conversationId
-                out += ChatUpdate(chat, UpdateKind.TO_REVIEW, lastLine(room.threadId, detail))
+                out += ChatUpdate(chat, UpdateKind.TO_REVIEW, projections.thread(this, room.threadId).preview(detail))
             }
         }
     }
@@ -120,26 +127,47 @@ internal fun CompanionState.updates(pending: List<PendingApproval>, detail: Acti
     return out.sortedBy(ChatUpdate::kind)
 }
 
-private fun CompanionState.workingLine(threadId: String, detail: ActivityDetail): String {
+private fun CompanionState.workingLine(
+    threadId: String,
+    detail: ActivityDetail,
+    projections: ThreadProjectionCache,
+): String {
     val live = streaming[threadId]
     if (!live.isNullOrEmpty()) return live.takeLastCharacters(STREAM_TAIL).replace('\n', ' ')
     // A tool's name is often its raw command line. Only a reader who wants tool
     // calls sees it; a status notice is for everyone.
-    val last = visibleTranscript(threadId).lastOrNull()
+    val last = projections.thread(this, threadId).last
     if (last?.kind == Message.Kind.ACTIVITY && (detail != ActivityDetail.HIDDEN || isStatusNotice(last))) {
         last.tool?.let { return it.label }
     }
     return WORKING_LINE
 }
 
-/** What the chat last said, read by the roster's rule (no digest, webhook as its task). */
-private fun CompanionState.lastLine(threadId: String, detail: ActivityDetail): String =
-    rosterPreview(visibleTranscript(threadId), detail)
 
 /** How much of a streaming turn the working line carries. */
 private const val STREAM_TAIL = 120
 
 private const val WORKING_LINE = "Working…"
+
+/** Owned by the visible roster, shared with its sheet; no profile regex work on stream frames. */
+internal class RosterFaceCache {
+    private data class Entry(val bot: Bot, val last: Message?, val face: MausState)
+    private val entries = mutableMapOf<String, Entry>()
+
+    fun face(chat: Chat, state: CompanionState, projections: ThreadProjectionCache): MausState {
+        if (chat !is Chat.BotChat) return MausState.HAPPY
+        val last = projections.thread(state, chat.threadId).last
+        val previous = entries[chat.conversationId]
+        if (previous != null && previous.bot == chat.bot && previous.last === last) return previous.face
+        return MausState.forBot(chat.bot, last).also {
+            entries[chat.conversationId] = Entry(chat.bot, last, it)
+        }
+    }
+
+    fun retain(conversationIds: Set<String>) {
+        entries.keys.retainAll(conversationIds)
+    }
+}
 
 /**
  * The words the pill and the sheet put around a derivation, kept out of the

@@ -277,21 +277,37 @@ fun digestsByTurn(messages: List<Message>): Map<String, Message> = buildMap {
     }
 }
 
-/** Visibility and lookup need evidence presence, not an allocated sheet presentation. */
-internal fun hasDigestWork(message: Message): Boolean =
-    message.digest?.hasWork() ?: TurnDigest.parse(message.text).sections.isNotEmpty()
+internal enum class DigestVisibility { EMPTY, HEALTHY, PROBLEM }
+
+/** Visibility and lookup share one memo without retaining an allocated sheet/parser result. */
+internal fun hasDigestWork(message: Message): Boolean = message.digestVisibility() != DigestVisibility.EMPTY
 
 private fun StructuredTurnDigest.hasWork(): Boolean = (toolCalls ?: 0) > 0 ||
     tools.any { it.count > 0 || it.failed > 0 } || memory.isNotEmpty() ||
     (files?.count ?: 0) > 0 || (files?.truncated ?: 0) > 0 ||
     (toolsDropped ?: 0) > 0 || (memoryDropped ?: 0) > 0
 
-/** Text-only receipts are parsed once when choosing their transcript visibility. */
-internal fun shouldShowDigest(message: Message, showSummaries: Boolean): Boolean {
-    val digest = message.digest
-    if (digest != null) {
-        return digest.hasWork() && (showSummaries || message.turnSucceeded == false || digest.tools.any { it.failed > 0 })
+internal fun shouldShowDigest(message: Message, showSummaries: Boolean): Boolean =
+    when (message.digestVisibility()) {
+        DigestVisibility.EMPTY -> false
+        DigestVisibility.HEALTHY -> showSummaries
+        DigestVisibility.PROBLEM -> true
     }
-    val parsed = TurnDigest.parse(message.text)
-    return parsed.sections.isNotEmpty() && (showSummaries || message.turnSucceeded == false || parsed.failedCalls > 0)
+
+internal fun computeDigestVisibility(message: Message): DigestVisibility {
+    val structured = message.digest
+    return if (structured != null) {
+        when {
+            !structured.hasWork() -> DigestVisibility.EMPTY
+            message.turnSucceeded == false || structured.tools.any { it.failed > 0 } -> DigestVisibility.PROBLEM
+            else -> DigestVisibility.HEALTHY
+        }
+    } else {
+        val parsed = TurnDigest.parse(message.text)
+        when {
+            parsed.sections.isEmpty() -> DigestVisibility.EMPTY
+            message.turnSucceeded == false || parsed.failedCalls > 0 -> DigestVisibility.PROBLEM
+            else -> DigestVisibility.HEALTHY
+        }
+    }
 }

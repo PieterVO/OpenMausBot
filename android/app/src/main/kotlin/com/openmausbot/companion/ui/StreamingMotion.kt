@@ -8,6 +8,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.semantics.SemanticsPropertyKey
 import androidx.compose.ui.semantics.SemanticsPropertyReceiver
 import com.openmausbot.companion.core.StreamingText
+import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.flow.collectLatest
 import kotlin.math.PI
 import kotlin.math.cos
@@ -27,12 +28,50 @@ internal val LocalLiveTextVisibility = compositionLocalOf<(Boolean) -> Unit> { {
 internal class PacedText(initial: String) {
     var visible by mutableStateOf(initial)
     var revealing by mutableStateOf(false)
-    var position = initial.length.toDouble()
-    var previousSource = initial
-    var previousFrame = 0L
-    var startFrame = 0L
+    private var position = initial.length.toDouble()
+    private var previousSource = initial
+    private var previousFrame = 0L
+    private var startFrame = 0L
     var caretAlpha by mutableFloatStateOf(1f)
     var motion by mutableStateOf(true)
+    val caretOpacity: () -> Float = { caretAlpha }
+
+    suspend fun follow(source: String, completeSource: String, boundaries: IntArray, streamOpen: Boolean, reveal: Boolean) {
+        val durationScale = currentCoroutineContext()[MotionDurationScale]
+        snapshotFlow { (durationScale?.scaleFactor ?: 1f) > 0f }.collectLatest { moving ->
+            motion = moving
+            if (!source.startsWith(previousSource)) {
+                position = 0.0
+                visible = ""
+            }
+            previousSource = source
+            if (!moving || (!streamOpen && !reveal)) {
+                visible = completeSource
+                revealing = false
+                caretAlpha = 1f
+                position = source.length.toDouble()
+                return@collectLatest
+            }
+            val danglingSurrogate = source.lastOrNull()?.let { Character.isHighSurrogate(it) } == true
+            while (position < source.length || streamOpen) {
+                withFrameNanos { frame ->
+                    if (startFrame == 0L) startFrame = frame
+                    val seconds = if (previousFrame == 0L) 1.0 / 60.0 else (frame - previousFrame) / 1_000_000_000.0
+                    previousFrame = frame
+                    position = StreamingText.step(position, source.length, seconds, arrival = reveal && !streamOpen)
+                    val end = if (!streamOpen && position >= source.length && !danglingSurrogate)
+                        source.length else StreamingText.prefixEnd(boundaries, position)
+                    if (end != visible.length) visible = source.substring(0, end)
+                    revealing = end < source.length
+                    if (streamOpen) {
+                        val cycle = ((frame - startFrame) % 1_100_000_000L) / 1_100_000_000.0
+                        caretAlpha = (0.35 + 0.65 * (1.0 + cos(cycle * 2.0 * PI)) * 0.5).toFloat()
+                    }
+                }
+            }
+            revealing = false
+        }
+    }
 }
 
 @Composable
@@ -45,40 +84,7 @@ internal fun rememberPacedText(source: String, streamOpen: Boolean = false, reve
     val boundaries = remember(source) { StreamingText.graphemeEnds(source) }
     // A duration-scale update cancels the frame loop even while a stream is open.
     LaunchedEffect(source, streamOpen, reveal) {
-        val durationScale = coroutineContext[MotionDurationScale]
-        snapshotFlow { (durationScale?.scaleFactor ?: 1f) > 0f }.collectLatest { moving ->
-            paced.motion = moving
-            if (!source.startsWith(paced.previousSource)) {
-                paced.position = 0.0
-                paced.visible = ""
-            }
-            paced.previousSource = source
-            if (!moving || (!streamOpen && !reveal)) {
-                paced.visible = completeSource
-                paced.revealing = false
-                paced.caretAlpha = 1f
-                paced.position = source.length.toDouble()
-                return@collectLatest
-            }
-            while (paced.position < source.length || streamOpen) {
-                withFrameNanos { frame ->
-                    if (paced.startFrame == 0L) paced.startFrame = frame
-                    val seconds = if (paced.previousFrame == 0L) 1.0 / 60.0 else (frame - paced.previousFrame) / 1_000_000_000.0
-                    paced.previousFrame = frame
-                    paced.position = StreamingText.step(paced.position, source.length, seconds, arrival = reveal && !streamOpen)
-                    val danglingSurrogate = source.lastOrNull()?.let { Character.isHighSurrogate(it) } == true
-                    val end = if (!streamOpen && paced.position >= source.length && !danglingSurrogate)
-                        source.length else StreamingText.prefixEnd(boundaries, paced.position)
-                    if (end != paced.visible.length) paced.visible = source.substring(0, end)
-                    paced.revealing = end < source.length
-                    if (streamOpen) {
-                        val cycle = ((frame - paced.startFrame) % 1_100_000_000L) / 1_100_000_000.0
-                        paced.caretAlpha = (0.35 + 0.65 * (1.0 + cos(cycle * 2.0 * PI)) * 0.5).toFloat()
-                    }
-                }
-            }
-            paced.revealing = false
-        }
+        paced.follow(source, completeSource, boundaries, streamOpen, reveal)
     }
     // Once Remove animations is known, a new batch is visible in this very
     // composition, not one frame after its effect has copied the source.

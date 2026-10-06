@@ -33,7 +33,6 @@ import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -205,23 +204,17 @@ private val QUEUED_MESSAGES = Regex("^(\\d+) messages queued$")
 /** What the pill opens: the active chats, grouped by what they need. */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-internal fun UpdatesSheet(onOpen: (Chat) -> Unit, onDismiss: () -> Unit) {
-    val environment = LocalCompanion.current
-    val session = environment.session
-    val state by session.state.collectAsState()
-    val activityDetail by environment.chatPreferences.activityDetail.collectAsState()
-
-    val updates = remember(state, activityDetail) { state.updates(activityDetail) }
+internal fun UpdatesSheet(
+    updates: List<ChatUpdate>,
+    faces: Map<String, MausState>,
+    onOpen: (Chat) -> Unit,
+    onDismiss: () -> Unit,
+) {
     val sections = remember(updates) {
         UpdateKind.entries.mapNotNull { kind ->
             val items = updates.filter { it.kind == kind }
             if (items.isEmpty()) null else kind to items
         }
-    }
-    // One pass over the fleet rather than one per row: resolving a face walks the
-    // chat's visible transcript.
-    val faces = remember(state, updates) {
-        updates.associate { it.id to MausState.forChat(it.chat, state) }
     }
 
     ModalBottomSheet(

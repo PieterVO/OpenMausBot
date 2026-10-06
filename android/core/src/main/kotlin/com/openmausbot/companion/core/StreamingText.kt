@@ -69,11 +69,15 @@ object StreamingText {
      * The header waits for its complete delimiter; an open stream's last line
      * waits for a newline even after the cursor has caught up to received text.
      */
-    fun revealedPrefix(text: String, count: Int, final: Boolean): String {
-        if (final && count >= text.length) return text
+    fun revealedPrefix(text: String, count: Int, final: Boolean): String =
+        text.substring(0, revealedEnd(text, count, final))
+
+    /** The same row-aware reveal without copying the already settled prefix. */
+    fun revealedEnd(text: String, count: Int, final: Boolean): Int {
+        if (final && count >= text.length) return text.length
         val cut = count.coerceIn(0, text.length)
         val lineStart = text.lastIndexOf('\n', cut - 1) + 1
-        if (!isRevealTableLine(text, lineStart)) return text.substring(0, cut)
+        if (!isRevealTableLine(text, lineStart)) return cut
 
         var tableStart = lineStart
         while (tableStart > 0) {
@@ -82,17 +86,17 @@ object StreamingText {
             tableStart = previousStart
         }
         val headerEnd = completeRevealLineEnd(text, tableStart, final)
-            ?: return text.substring(0, tableStart)
-        if (headerEnd == text.length) return text.substring(0, tableStart)
+            ?: return tableStart
+        if (headerEnd == text.length) return tableStart
         val delimiterStart = headerEnd + 1
         val delimiterEnd = completeRevealLineEnd(text, delimiterStart, final)
-            ?: return text.substring(0, tableStart)
-        if (!isRevealDelimiter(text, delimiterStart, delimiterEnd)) return text.substring(0, tableStart)
-        if (lineStart <= delimiterStart) return text.substring(0, delimiterEnd)
+            ?: return tableStart
+        if (!isRevealDelimiter(text, delimiterStart, delimiterEnd)) return tableStart
+        if (lineStart <= delimiterStart) return delimiterEnd
 
         val rowEnd = completeRevealLineEnd(text, lineStart, final)
-            ?: return text.substring(0, lineStart)
-        return text.substring(0, rowEnd)
+            ?: return lineStart
+        return rowEnd
     }
 
     private fun isRevealTableLine(text: String, start: Int): Boolean {
@@ -124,7 +128,18 @@ object StreamingText {
 
 
     /** Closes only active strong/code spans, inside-out; fenced code and literal escapes stay intact. */
-    fun closePartialMarkdown(source: String): String {
+    fun closePartialMarkdown(source: String): String = closePartialMarkdown(source, null)
+
+    internal data class MarkdownTail(val text: String, val settledEnd: Int)
+
+    /** A checkpoint is safe only after inline and fence state have both cleared. */
+    internal fun closeMarkdownTail(source: String): MarkdownTail {
+        var settledEnd = 0
+        val text = closePartialMarkdown(source) { settledEnd = it }
+        return MarkdownTail(text, settledEnd)
+    }
+
+    private fun closePartialMarkdown(source: String, settled: ((Int) -> Unit)?): String {
         val pending = ArrayList<Delimiter>(2)
         var fence: Fence? = null
         var lineStart = 0
@@ -179,6 +194,7 @@ object StreamingText {
                 }
             }
             lineStart = nextLineStart(source, lineEnd)
+            if (lineEnd < source.length && fence == null && pending.isEmpty()) settled?.invoke(lineStart)
         }
         if (fence != null || pending.isEmpty()) return source
         // Closing a content-free code opener or an escaped delimiter would manufacture Markdown.

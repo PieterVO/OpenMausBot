@@ -20,6 +20,8 @@ import androidx.compose.ui.text.TextLayoutResult
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.layout.boundsInWindow
+import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.*
 import androidx.compose.ui.text.font.FontWeight
@@ -64,8 +66,6 @@ internal fun PlanCard(row: TranscriptRow.Plan) {
         Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
             for (index in visible) {
                 val item = plan.items[index]
-                val done = item.status == TodoStatus.DONE
-                val cancelled = item.status == TodoStatus.CANCELLED
                 val label = localizedMobileCopy(when (item.status) {
                     TodoStatus.DONE -> "Done"; TodoStatus.ACTIVE -> "In progress"
                     TodoStatus.PENDING -> "To do"; TodoStatus.CANCELLED -> "Cancelled"
@@ -110,13 +110,17 @@ private fun PlanItemText(text: String, status: TodoStatus, moving: Boolean) {
 @Composable
 internal fun PlanCircle(status: TodoStatus, ink: Color, modifier: Modifier = Modifier) {
     val moving = motionEnabled()
-    val transition = rememberInfiniteTransition(label = "Active plan")
-    val angle by transition.animateFloat(0f, 360f, infiniteRepeatable(tween(1000, easing = LinearEasing)), label = "Plan arc")
+    var shown by remember { mutableStateOf(true) }
+    val angle = if (moving && shown && status == TodoStatus.ACTIVE) {
+        rememberInfiniteTransition(label = "Active plan").animateFloat(
+            0f, 360f, infiniteRepeatable(tween(1000, easing = LinearEasing)), label = "Plan arc",
+        )
+    } else null
     val done = status == TodoStatus.DONE
     val check by animateFloatAsState(if (done) 1f else 0f, if (moving) tween(280) else snap(), label = "Plan check")
     val fill by animateFloatAsState(if (done) 1f else 0.6f, if (moving) spring(dampingRatio = 0.82f, stiffness = 380f) else snap(), label = "Plan fill")
     val foreground = remember(ink) { if (1.05f / (ink.luminance() + 0.05f) >= 3f) Color.White else Color.Black }
-    Canvas(modifier) {
+    Canvas(modifier.onGloballyPositioned { shown = !it.boundsInWindow().isEmpty }) {
         val stroke = 1.5.dp.toPx()
         when (status) {
             TodoStatus.DONE -> {
@@ -129,7 +133,7 @@ internal fun PlanCircle(status: TodoStatus, ink: Color, modifier: Modifier = Mod
                     Offset(size.width * (0.44f + 0.31f * second), size.height * (0.69f - 0.39f * second)), stroke, androidx.compose.ui.graphics.StrokeCap.Round)
             }
             TodoStatus.ACTIVE -> { drawCircle(ink.copy(alpha = 0.25f), style = Stroke(stroke))
-                drawArc(ink, if (moving) angle else -90f, 90f, false, style = Stroke(stroke)) }
+                drawArc(ink, angle?.value ?: -90f, 90f, false, style = Stroke(stroke)) }
             TodoStatus.PENDING -> drawCircle(ink.copy(alpha = 0.35f), style = Stroke(stroke))
             TodoStatus.CANCELLED -> {
                 drawLine(ink.copy(alpha = 0.45f), androidx.compose.ui.geometry.Offset(size.width * 0.3f, size.height * 0.3f), androidx.compose.ui.geometry.Offset(size.width * 0.7f, size.height * 0.7f), stroke)

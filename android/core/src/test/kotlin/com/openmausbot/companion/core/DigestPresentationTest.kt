@@ -140,6 +140,33 @@ class DigestPresentationTest {
     }
 
     @Test
+    fun cachedVisibilityIsIndependentOfOptInAndNeverLeaksAcrossCopiesOrWirePayloads() {
+        val healthy = message(null, "[digest] · tools: shell ×2 (0 failed)")
+        val before = CompanionJson.encodeToString(healthy)
+        repeat(20) {
+            assertTrue(hasDigestWork(healthy))
+            assertTrue(shouldShowDigest(healthy, showSummaries = true))
+            assertFalse(shouldShowDigest(healthy, showSummaries = false))
+        }
+        assertEquals(before, CompanionJson.encodeToString(healthy))
+        val restored = CompanionJson.decodeFromString<Message>(before)
+        assertEquals(healthy, restored)
+        assertFalse(shouldShowDigest(restored, showSummaries = false))
+        val failedTurn = healthy.copy(turnSucceeded = false)
+        assertTrue(shouldShowDigest(failedTurn, showSummaries = false))
+        val failedStep = healthy.copy(text = "[digest] · tools: shell ×2 (1 failed)")
+        assertTrue(shouldShowDigest(failedStep, showSummaries = false))
+        val quiet = healthy.copy(text = "[digest] · no tool calls · reply: Hello", turnSucceeded = false)
+        assertFalse(hasDigestWork(quiet))
+        assertFalse(shouldShowDigest(quiet, showSummaries = true))
+        assertFalse(shouldShowDigest(healthy, showSummaries = false))
+        // Structured evidence still wins over legacy text, even when a patch replaces it.
+        val structured = failedStep.copy(digest = evidence())
+        assertFalse(shouldShowDigest(structured, showSummaries = false))
+        assertTrue(shouldShowDigest(structured.copy(digest = evidence().copy(tools = listOf(DigestTool("shell", 1, 1)))), showSummaries = false))
+    }
+
+    @Test
     fun structuredWireFieldsRoundTripWithoutChangingOldMessageConstructors() {
         val original = message().copy(
             tool = ToolActivity("TodoWrite", input = "{}", summary = "redacted", itemId = "item", output = "result"),

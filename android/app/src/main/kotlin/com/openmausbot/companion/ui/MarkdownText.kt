@@ -15,9 +15,11 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.platform.ClipEntry
 import androidx.compose.ui.platform.LocalClipboard
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.semantics.clearAndSetSemantics
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.*
@@ -36,12 +38,13 @@ import kotlinx.coroutines.launch
 @Composable
 fun MarkdownText(source: String, modifier: Modifier = Modifier, caret: Boolean = false, openLink: ((String) -> Unit)? = null,
     settling: Boolean = false, caretAlpha: Float = 1f) {
-    MarkdownBlocks(remember(source) { Markdown.blocks(source) }, modifier, caret, openLink, settling, caretAlpha)
+    val opacity = remember(caretAlpha) { { caretAlpha } }
+    MarkdownBlocks(remember(source) { Markdown.blocks(source) }, modifier, caret, openLink, settling, opacity)
 }
 
 @Composable
 internal fun MarkdownBlocks(blocks: List<MarkdownBlock>, modifier: Modifier = Modifier, caret: Boolean = false, openLink: ((String) -> Unit)? = null,
-    settling: Boolean = false, caretAlpha: Float = 1f) {
+    settling: Boolean = false, caretAlpha: () -> Float = StaticCaretAlpha) {
     CompositionLocalProvider(LocalLinkOpener provides openLink, LocalCaretAlpha provides caretAlpha) {
         Column(modifier, verticalArrangement = Arrangement.spacedBy(8.dp)) {
             blocks.forEachIndexed { index, block ->
@@ -55,7 +58,8 @@ internal fun MarkdownBlocks(blocks: List<MarkdownBlock>, modifier: Modifier = Mo
 
 private val LocalLinkOpener = compositionLocalOf<((String) -> Unit)?> { null }
 private val LocalInkSettling = compositionLocalOf { false }
-private val LocalCaretAlpha = compositionLocalOf { 1f }
+private val StaticCaretAlpha: () -> Float = { 1f }
+private val LocalCaretAlpha = compositionLocalOf { StaticCaretAlpha }
 
 @Composable
 private fun MarkdownBlockView(block: MarkdownBlock, tail: Boolean) {
@@ -94,7 +98,8 @@ private fun MarkdownBlockView(block: MarkdownBlock, tail: Boolean) {
 @Composable
 private fun CodeBlock(block: MarkdownBlock.Code, tail: Boolean) {
     val clipboard = LocalClipboard.current
-    val caretAlpha = LocalCaretAlpha.current
+    val codeStyle = MaterialTheme.typography.bodySmall.copy(fontFamily = FontFamily.Monospace)
+    val caret = rememberCaretContent(tail, codeStyle, secondaryTint)
     val scope = rememberCoroutineScope()
     val haptics = rememberHaptics()
     var copied by remember(block.text) { mutableStateOf(false) }
@@ -112,8 +117,8 @@ private fun CodeBlock(block: MarkdownBlock.Code, tail: Boolean) {
                 Text(stringResource(if (copied) R.string.mobile_copied_8e3df45a else R.string.mobile_copy_af74f7c5), color = chatTint.ink)
             }
         }
-        Text(buildAnnotatedString { append(block.text); appendCaret(tail, secondaryTint, caretAlpha) },
-            style = MaterialTheme.typography.bodySmall, fontFamily = FontFamily.Monospace,
+        Text(remember(block.text, tail) { buildAnnotatedString { append(block.text); appendCaret(tail) } },
+            style = codeStyle, inlineContent = caret,
             softWrap = false, modifier = Modifier.horizontalScroll(rememberScrollState()).padding(bottom = 10.dp))
     }
 }
@@ -133,7 +138,8 @@ internal fun MarkdownInlineText(text: String, tail: Boolean, style: TextStyle, m
     val muted = secondaryTint
     val opener = LocalLinkOpener.current
     val settling = LocalInkSettling.current
-    val caretAlpha = LocalCaretAlpha.current
+    val caret = rememberCaretContent(tail, style.copy(fontWeight = fontWeight ?: style.fontWeight,
+        textDecoration = textDecoration ?: style.textDecoration), muted)
     val defaultInk = if (color == Color.Unspecified) MaterialTheme.colorScheme.onSurface else color
     val spans = remember(text) { InlineMarkdown.parse(text) }
     val ink = remember(spans, settling) { if (settling) InkTail(InlineMarkdown.plain(spans)) else null }
@@ -160,7 +166,8 @@ internal fun MarkdownInlineText(text: String, tail: Boolean, style: TextStyle, m
                 modifier = Modifier.background(tint.inset, RoundedCornerShape(5.dp)).padding(horizontal = 3.dp))
         }
     }.toMap() }
-    val annotated = remember(spans, content, tail, muted, tint.ink, opener, color, ink, defaultInk, caretAlpha) {
+    val inlineContent = remember(content, caret) { if (caret.isEmpty()) content else content + caret }
+    val annotated = remember(spans, content, tail, tint.ink, opener, color, ink, defaultInk) {
         val body = buildAnnotatedString {
         for ((index, span) in spans.withIndex()) {
             val spanStyle = SpanStyle(fontWeight = if (InlineStyle.BOLD in span.styles) FontWeight.Bold else null,
@@ -179,15 +186,36 @@ internal fun MarkdownInlineText(text: String, tail: Boolean, style: TextStyle, m
         }
         buildAnnotatedString {
             append(ink?.apply(body, defaultInk) ?: body)
-            appendCaret(tail, muted, caretAlpha)
+            appendCaret(tail)
         }
     }
     Text(annotated, modifier.semantics { this[InkTailAlphas] = ink?.alphas ?: emptyList() },
-        color = color, style = style, fontWeight = fontWeight, textDecoration = textDecoration, inlineContent = content)
+        color = color, style = style, fontWeight = fontWeight, textDecoration = textDecoration, inlineContent = inlineContent)
 }
 
-private fun AnnotatedString.Builder.appendCaret(tail: Boolean, muted: Color, alpha: Float) {
-    if (tail) withStyle(SpanStyle(color = muted.copy(alpha = muted.alpha * alpha))) { append(" ▍") }
+private const val CaretContentId = "streaming-caret"
+private const val CaretText = " ▍"
+
+private fun AnnotatedString.Builder.appendCaret(tail: Boolean) {
+    if (tail) appendInlineContent(CaretContentId, CaretText)
+}
+
+/** The same glyph and accessible text; its breathing opacity never rebuilds body spans. */
+@Composable
+private fun rememberCaretContent(tail: Boolean, style: TextStyle, color: Color): Map<String, InlineTextContent> {
+    if (!tail) return emptyMap()
+    val opacity = LocalCaretAlpha.current
+    val density = LocalDensity.current
+    val measurer = rememberTextMeasurer()
+    return remember(style, color, opacity, density, measurer) {
+        val measured = measurer.measure(AnnotatedString(CaretText), style, softWrap = false)
+        val width = with(density) { measured.size.width.toSp() }
+        val height = with(density) { measured.size.height.toSp() }
+        mapOf(CaretContentId to InlineTextContent(Placeholder(width, height, PlaceholderVerticalAlign.TextCenter)) {
+            Text(CaretText, style = style, color = color, softWrap = false,
+                modifier = Modifier.clearAndSetSemantics {}.graphicsLayer { alpha = opacity() })
+        })
+    }
 }
 
 /** Fade the rendered graphemes, not Markdown markers; earlier blocks stay solid. */

@@ -319,4 +319,58 @@ class ChatPreferencesTest {
         assertEquals(LiveNarration(setOf("narration"), "Checking the task"), liveNarration(messages, busy = true, detail = ActivityDetail.HIDDEN))
         assertEquals(listOf("user", "narration", "plan.first"), transcriptRows(messages, ActivityDetail.HIDDEN).map { it.id })
     }
+
+    @Test
+    fun rosterRunsRespectVisibleProblemSummariesButSkipHealthySummaries() {
+        val healthy = digest("healthy").copy(text = "[digest] · tools: shell ×2 (0 failed)")
+        val problem = digest("problem").copy(text = "[digest] · tools: shell ×2 (1 failed)")
+        val before = listOf(activity("a"), activity("b"))
+        val after = listOf(activity("c"), activity("d", ok = null))
+        assertEquals("Running 4 steps", rosterPreview(before + healthy + after, ActivityDetail.REDUCED))
+        assertEquals("Running 2 steps", rosterPreview(before + problem + after, ActivityDetail.REDUCED))
+        assertEquals("Ran 2 steps", rosterPreview(before + problem, ActivityDetail.REDUCED))
+        for (detail in ActivityDetail.entries) {
+            assertEquals("hello", rosterPreview(listOf(text("reply"), healthy, problem), detail))
+        }
+    }
+
+    @Test
+    fun rosterTailKeepsNoticeFailureAndCompactionRulesAtEveryDetail() {
+        val notice = activity("notice").copy(tool = ToolActivity("notice: Retrying"))
+        val failure = activity("failure", ok = false).copy(tool = ToolActivity("error: Cannot connect", ok = false))
+        for (detail in ActivityDetail.entries) {
+            assertEquals("notice: Retrying", rosterPreview(listOf(text("reply"), notice), detail))
+            assertEquals("Cannot connect", rosterPreview(listOf(text("reply"), failure), detail))
+        }
+        assertEquals(
+            "notice: Retrying",
+            rosterPreview(listOf(text("reply"), notice, activity("step")), ActivityDetail.HIDDEN),
+        )
+        val messages = listOf(text("reply"), compaction("compact"), activity("step"))
+        assertEquals("hello", rosterPreview(messages, ActivityDetail.HIDDEN))
+        assertEquals("run", rosterPreview(messages, ActivityDetail.REDUCED))
+        assertEquals("run", rosterPreview(messages, ActivityDetail.FULL))
+    }
+
+    @Test
+    fun liveNarrationSelectsOnlyTheNewestBotTextTurnAfterTheLatestUser() {
+        val messages = listOf(
+            text("before").copy(turnId = "latest"),
+            text("user").copy(role = Message.Role.USER),
+            text("older-final").copy(turnId = "older", turnTerminal = true),
+            text("latest-first").copy(turnId = "latest", text = "First"),
+            text("legacy"),
+            activity("tool"),
+            text("latest-last").copy(turnId = "latest", text = null),
+        )
+        assertEquals(
+            LiveNarration(setOf("latest-first", "latest-last"), null),
+            liveNarration(messages, busy = true, detail = ActivityDetail.HIDDEN),
+        )
+        val completed = messages + text("latest-final").copy(turnId = "latest", turnTerminal = true)
+        assertEquals(LiveNarration.NONE, liveNarration(completed, busy = true, detail = ActivityDetail.HIDDEN))
+        for (detail in ActivityDetail.entries) {
+            assertEquals(LiveNarration.NONE, liveNarration(messages, busy = false, detail = detail))
+        }
+    }
 }

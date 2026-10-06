@@ -78,6 +78,7 @@ import com.openmausbot.companion.core.digestsByTurn
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -153,6 +154,9 @@ import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.withContext
 
 /**
@@ -191,7 +195,7 @@ fun ChatScreen(
     // and so does a navigation stack restored after the process was killed: wait
     // for it rather than concluding the chat is gone and bouncing back to the
     // roster, which would make the tap open nothing.
-    val resolution = remember(state, destination) {
+    val resolution = remember(state.bots, state.rooms, state.activeLeafIds, ThreadResolution.hydrated(state), destination) {
         ThreadResolution.resolve(state, destination)
     }
     when (resolution) {
@@ -200,10 +204,13 @@ fun ChatScreen(
         // The live chat record, so busy/unread stay current as frames land.
         is ThreadResolution.Result.Open -> {
             // Resolve the owner without changing the task named by the destination.
+            // Resolution creates a wrapper on every fleet frame. Retain the
+            // equal chat identity so unchanged transcript items can be skipped.
+            val chat = remember(resolution.chat) { resolution.chat }
             val resolved = (destination as? Destination.Thread)?.let { resolution.chat.target }
             LaunchedEffect(resolved) { if (resolved != null) onResolved(resolved) }
-            CompositionLocalProvider(LocalConversationTint provides conversationTint(resolution.chat.color)) {
-                LoadedChat(resolution.chat, state, onBack, onOpenComputer, onOpenOverview, retainsDraft, onResolved, onOpenChat)
+            CompositionLocalProvider(LocalConversationTint provides conversationTint(chat.color)) {
+                LoadedChat(chat, state, onBack, onOpenComputer, onOpenOverview, retainsDraft, onResolved, onOpenChat)
             }
         }
     }
@@ -255,7 +262,14 @@ private fun LoadedChat(
     val dictation = environment.dictation
     val chatDrafts = environment.chatDrafts
     val liveCalls = environment.liveCalls
-    val liveCall by liveCalls.state.collectAsState()
+    val callHoldsMic by remember(liveCalls) {
+        liveCalls.state.map { it.holdsMedia }.distinctUntilChanged()
+    }.collectAsState(initial = liveCalls.state.value.holdsMedia)
+    val offersCall by remember(liveCalls, session) {
+        combine(liveCalls.state, session.state) { local, current ->
+            LiveCallRules.offersCall(local, current.liveCall)
+        }.distinctUntilChanged()
+    }.collectAsState(initial = LiveCallRules.offersCall(liveCalls.state.value, session.state.value.liveCall))
     var showingLiveSettings by remember { mutableStateOf(false) }
     // The call that waits on this phone's first-call disclosure.
     var pendingLiveCall by remember { mutableStateOf<PendingLiveCall?>(null) }
@@ -264,7 +278,6 @@ private fun LoadedChat(
     // A call holds the microphone in every chat, not only its own: the manager
     // is app-scoped and the call runs on while the person reads another chat,
     // where dictation's audio focus would end it as "another app took the audio".
-    val callHoldsMic = liveCall.holdsMedia
     LaunchedEffect(callHoldsMic) { if (callHoldsMic) dictation.stop() }
     val haptics = rememberHaptics()
     val scope = rememberCoroutineScope()
@@ -481,7 +494,11 @@ private fun LoadedChat(
     val dictationError by dictation.error.collectAsState()
     val dictationLocked = dictationListening || dictationStarting
 
-    val rawTranscript = remember(state, threadId) { state.visibleTranscript(threadId) }
+    val hasLeafOverride = state.activeLeafIds.containsKey(threadId)
+    val activeLeaf = if (hasLeafOverride) state.activeLeafIds[threadId] else (chat as? Chat.BotChat)?.bot?.activeLeafId
+    val rawTranscript = remember(threadId, state.messages[threadId], hasLeafOverride, activeLeaf, state.pendingEdits[threadId]) {
+        state.visibleTranscript(threadId)
+    }
     val activityDetail by environment.chatPreferences.activityDetail.collectAsState()
     val showSummaries by environment.chatPreferences.showWorkSummaries.collectAsState()
     val digests = remember(rawTranscript) { digestsByTurn(rawTranscript) }
@@ -512,9 +529,12 @@ private fun LoadedChat(
             rawTranscript.filter { it.role == Message.Role.BOT && it.kind == Message.Kind.TEXT }.mapTo(mutableSetOf()) { it.id },
         ) else emptySet()
     }
-    val latestUserAt = rawTranscript.lastOrNull { it.role == Message.Role.USER }?.at ?: Double.NEGATIVE_INFINITY
-    val livePlan = if (chat.busy) transcript.filterIsInstance<TranscriptRow.Plan>()
-        .lastOrNull { it.message.at > latestUserAt && !it.plan.isFinished } else null
+    val livePlan = remember(rawTranscript, transcript, chat.busy) {
+        val latestUserAt = rawTranscript.lastOrNull { it.role == Message.Role.USER }?.at ?: Double.NEGATIVE_INFINITY
+        if (chat.busy) transcript.lastOrNull {
+            it is TranscriptRow.Plan && it.message.at > latestUserAt && !it.plan.isFinished
+        } as? TranscriptRow.Plan else null
+    }
     var expandedTurns by remember(threadId) { mutableStateOf(emptySet<String>()) }
     var revealedTurnMessageId by remember(threadId) { mutableStateOf<String?>(null) }
     val predictiveChips = remember(quickReplies) {
@@ -753,7 +773,7 @@ private fun LoadedChat(
     val bot = (chat as? Chat.BotChat)?.bot
     // The computer is bot-only; a non-DM room exposes task navigation when the
     // paired desktop supplied a task list. Both answers are constants.
-    val commands = SlashCommands.forChat(chat)
+    val commands = remember(chat) { SlashCommands.forChat(chat) }
     // One handler for the one door. The name pill stopped being the second when
     // it became the way into a bot's profile, so the + now carries every action
     // there is — including both export formats.
@@ -1015,71 +1035,33 @@ private fun LoadedChat(
                     }
 
                     itemsIndexedKeyed(transcript) { index, message ->
-                        val appended = remember(message.id) { arrivalTracker.consume(message.head.id) }
-                        val revealText = appended && message is TranscriptRow.Single &&
-                            message.message.role == Message.Role.BOT && message.message.kind == Message.Kind.TEXT
-                        ArrivalRow(message.id, appended, message.role == Message.Role.USER, revealText = revealText) {
-                        CompositionLocalProvider(LocalTextArrival provides revealText) {
-                        Column(Modifier.padding(top = if (index == 0 || TranscriptLayout.endsRowRun(transcript, index - 1)) 8.dp else 0.dp),
-                            verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                            // A gap in time is worth marking; a timestamp on every
-                            // message is just noise.
-                            if (TranscriptLayout.startsNewRowStretch(transcript, index)) {
-                                Text(
-                                    text = localizedMobileCopy(RelativeStamp.separator(
-                                        message.at,
-                                        System.currentTimeMillis(),
-                                        locale = Locale.getDefault(),
-                                    )),
-                                    fontSize = 13.sp,
-                                    color = secondaryTint,
-                                    modifier = Modifier
-                                        .fillMaxWidth()
-                                        .padding(top = 6.dp),
-                                    textAlign = TextAlign.Center,
-                                )
-                            }
-                            when (message) {
-                                is TranscriptRow.Single -> MessageRow(
-                                    chat = chat,
-                                    message = message.message,
-                                    // One tail per run of bubbles from the same author,
-                                    // not one per bubble.
-                                    endsRun = TranscriptLayout.endsRowRun(transcript, index),
-                                    showSender = index == 0 || TranscriptLayout.endsRowRun(transcript, index - 1),
-                                    openLink = ::openLink,
-                                    openAttachment = ::openAttachment,
-                                    openThread = ::openThread,
-                                    digest = if (message.message.id in terminalReplies) digests[message.message.turnId] else null,
-                                )
-                                is TranscriptRow.ActivityRun -> ActivityRunChip(message.items, ::openThread, busy = chat.busy)
-                                is TranscriptRow.Plan -> PlanCard(message)
-                                is TranscriptRow.AssistantTurn -> AssistantTurnChip(
-                                    turn = message,
-                                    chat = chat,
-                                    expanded = message.turnId in expandedTurns,
-                                    revealMessageId = revealedTurnMessageId,
-                                    onRevealed = { target ->
-                                        session.consumeFocus(target)
-                                        if (revealedTurnMessageId == target) revealedTurnMessageId = null
-                                    },
-                                    onToggle = {
-                                        expandedTurns = if (message.turnId in expandedTurns) expandedTurns - message.turnId
-                                            else expandedTurns + message.turnId
-                                    },
-                                    openLink = ::openLink,
-                                    openAttachment = ::openAttachment,
-                                    openThread = ::openThread,
-                                    digest = digests[message.turnId],
-                                )
-                            }
-                        }
-                        }
-                        }
+                        SettledTranscriptRow(
+                            row = message, index = index, transcript = transcript,
+                            chat = chat, arrivals = arrivalTracker,
+                            expanded = (message as? TranscriptRow.AssistantTurn)?.let { it.turnId in expandedTurns } == true,
+                            revealMessageId = revealedTurnMessageId,
+                            onRevealed = { target ->
+                                session.consumeFocus(target)
+                                if (revealedTurnMessageId == target) revealedTurnMessageId = null
+                            },
+                            onToggle = {
+                                (message as? TranscriptRow.AssistantTurn)?.let { turn ->
+                                    expandedTurns = if (turn.turnId in expandedTurns) expandedTurns - turn.turnId
+                                        else expandedTurns + turn.turnId
+                                }
+                            },
+                            openLink = ::openLink, openAttachment = ::openAttachment, openThread = ::openThread,
+                            digest = when (message) {
+                                is TranscriptRow.Single -> if (message.message.id in terminalReplies) digests[message.message.turnId] else null
+                                is TranscriptRow.AssistantTurn -> digests[message.turnId]
+                                else -> null
+                            },
+                        )
                     }
 
                     if (liveCount == 1) {
                         item(key = LIVE_BUBBLE_KEY) {
+                            RecompositionProbe { "live" }
                             CompositionLocalProvider(LocalLiveTextVisibility provides recordLiveText) {
                             AnimatedContent(targetState = tail == TranscriptTail.WORKING, transitionSpec = {
                                 // Pacing already grows the text; interpolating its measured
@@ -1099,7 +1081,7 @@ private fun LoadedChat(
                     face = remember(chat, rawTranscript) {
                         MausState.forChat(chat, rawTranscript.lastOrNull())
                     },
-                    unreadElsewhere = remember(state, chat) {
+                    unreadElsewhere = remember(state.bots, state.rooms, chat.unread) {
                         (state.unreadCount - if (chat.unread) 1 else 0).coerceAtLeast(0)
                     },
                     onBack = { backBySwipe() },
@@ -1123,7 +1105,7 @@ private fun LoadedChat(
                             if (liveCalls.disclosureDue) pendingLiveCall = call else startLiveCall(call)
                         }
                     },
-                    showCall = LiveCallRules.offersCall(liveCall, state.liveCall),
+                    showCall = offersCall,
                     // A bot's face and its name pill are both the door to its
                     // profile; a room has no profile, so its pill opens the same
                     // sheet the + does.
@@ -1140,7 +1122,10 @@ private fun LoadedChat(
                         .align(Alignment.TopCenter)
                         .widthIn(max = CHAT_CONTENT_MAX_WIDTH),
                 )
-                androidx.compose.animation.AnimatedVisibility(visible = !followingLatest && listState.canScrollForward,
+                val showJump by remember(listState) {
+                    derivedStateOf { !followingLatest && listState.canScrollForward }
+                }
+                androidx.compose.animation.AnimatedVisibility(visible = showJump,
                     enter = fadeIn() + slideInVertically { it / 2 }, exit = fadeOut(),
                     modifier = Modifier.align(Alignment.BottomEnd).padding(12.dp)) {
                     Button(onClick = {
@@ -1349,6 +1334,66 @@ private fun LoadedChat(
             onShare = { filePreviews.share(item) },
             onOpen = { filePreviews.openWithSystem(item) },
         )
+    }
+}
+
+/**
+ * A stable composition boundary below LazyListScope's rebuilt item provider.
+ * Network deltas replace the live item without redoing settled row presentation.
+ */
+@Composable
+private fun SettledTranscriptRow(
+    row: TranscriptRow,
+    index: Int,
+    transcript: List<TranscriptRow>,
+    chat: Chat,
+    arrivals: TranscriptArrivals,
+    expanded: Boolean,
+    revealMessageId: String?,
+    onRevealed: (String) -> Unit,
+    onToggle: () -> Unit,
+    openLink: (String, Message) -> Unit,
+    openAttachment: (DisplayedMessageAttachment, Message, DownloadedFile?) -> Unit,
+    openThread: (ThreadRef) -> Unit,
+    digest: Message?,
+) {
+    RecompositionProbe { "row:${row.id}" }
+    val appended = remember(row.id) { arrivals.consume(row.head.id) }
+    val revealText = appended && row is TranscriptRow.Single &&
+        row.message.role == Message.Role.BOT && row.message.kind == Message.Kind.TEXT
+    ArrivalRow(row.id, appended, row.role == Message.Role.USER, revealText = revealText) {
+        CompositionLocalProvider(LocalTextArrival provides revealText) {
+            Column(
+                Modifier.padding(top = if (index == 0 || TranscriptLayout.endsRowRun(transcript, index - 1)) 8.dp else 0.dp),
+                verticalArrangement = Arrangement.spacedBy(6.dp),
+            ) {
+                if (TranscriptLayout.startsNewRowStretch(transcript, index)) {
+                    Text(
+                        text = localizedMobileCopy(RelativeStamp.separator(row.at, System.currentTimeMillis(), locale = Locale.getDefault())),
+                        fontSize = 13.sp, color = secondaryTint,
+                        modifier = Modifier.fillMaxWidth().padding(top = 6.dp),
+                        textAlign = TextAlign.Center,
+                    )
+                }
+                when (row) {
+                    is TranscriptRow.Single -> MessageRow(
+                        chat = chat, message = row.message,
+                        endsRun = TranscriptLayout.endsRowRun(transcript, index),
+                        showSender = index == 0 || TranscriptLayout.endsRowRun(transcript, index - 1),
+                        openLink = openLink, openAttachment = openAttachment, openThread = openThread,
+                        digest = digest,
+                    )
+                    is TranscriptRow.ActivityRun -> ActivityRunChip(row.items, openThread, busy = chat.busy)
+                    is TranscriptRow.Plan -> PlanCard(row)
+                    is TranscriptRow.AssistantTurn -> AssistantTurnChip(
+                        turn = row, chat = chat, expanded = expanded, revealMessageId = revealMessageId,
+                        onRevealed = onRevealed, onToggle = onToggle,
+                        openLink = openLink, openAttachment = openAttachment, openThread = openThread,
+                        digest = digest,
+                    )
+                }
+            }
+        }
     }
 }
 

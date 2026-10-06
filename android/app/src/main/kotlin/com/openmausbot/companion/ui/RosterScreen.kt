@@ -89,6 +89,7 @@ import com.openmausbot.companion.core.RosterRowStatus
 import com.openmausbot.companion.core.rosterStatus
 import com.openmausbot.companion.core.SearchHit
 import com.openmausbot.companion.core.Session
+import com.openmausbot.companion.core.ThreadProjectionCache
 import com.openmausbot.companion.core.chat
 import com.openmausbot.companion.core.chatSummaries
 import com.openmausbot.companion.core.forTask
@@ -173,34 +174,37 @@ fun RosterScreen(navigator: CompanionNavigator) {
         }
     }
 
-    // Folding the fleet walks every thread's transcript, so it is keyed on the
-    // state and the activity level alone: typing filters the fold instead of
-    // repeating it.
-    val summaries = remember(state, activityDetail) { state.chatSummaries(activityDetail) }
+    // Screen-owned caches disappear with this destination. Stream/runtime frames
+    // only refold the thread whose messages, leaf, edit or activity detail changed.
+    val projections = remember(session) { ThreadProjectionCache() }
+    val faceCache = remember(session) { RosterFaceCache() }
+    val summaries = remember(state.bots, state.rooms, state.messages, state.activeLeafIds, state.pendingEdits, activityDetail) {
+        state.chatSummaries(activityDetail, projections)
+    }
     // Only a search has rows to filter; the unsearched roster is assembled
     // section by section below.
     val rows = remember(summaries, query, state.queuedThreadIds) {
         rosterThreadRows(summaries, query, state.queuedThreadIds)
     }
-    val approvals = remember(state) { state.pendingApprovals }
-    val waiting = remember(state, approvals) { RosterLayout.waitingChats(state, approvals) }
-    // One pass over the fleet rather than one per row: resolving a face walks the
-    // chat's visible transcript.
-    val faces = remember(state, summaries) {
-        summaries.associate { it.id to MausState.forChat(it.chat, state) }
+    val approvals = remember(state.bots, state.rooms, state.messages, state.activeLeafIds, state.pendingEdits) {
+        projections.pendingApprovals(state)
+    }
+    val waiting = remember(state.bots, state.rooms, approvals) { RosterLayout.waitingChats(state, approvals) }
+    // The sheet consumes this same derivation instead of observing/folding again.
+    val updates = remember(state, approvals, activityDetail) { state.updates(approvals, activityDetail, projections) }
+    val faces = remember(state.bots, state.messages, state.activeLeafIds, state.pendingEdits, summaries) {
+        faceCache.retain((summaries.map { it.conversationId } + updates.map { it.id }).toSet())
+        summaries.associate { it.id to faceCache.face(it.chat, state, projections) }
     }
     val summariesById = remember(summaries) { summaries.associateBy { it.id } }
     // Hoisted out of the list: read inside a lazy item, `state` would make that
     // item's recompose scope the whole fleet.
     val rooms = state.rooms
-    val tiles = remember(state) {
+    val tiles = remember(state.bots, rooms) {
         rooms.associate { it.id to RosterLayout.memberBots(state, it) }
     }
-    // Read by the bar over the list and by nothing inside it, so the rows never
-    // recompose for it. `approvals` is handed over rather than walked again.
-    val updates = remember(state, approvals, activityDetail) { state.updates(approvals, activityDetail) }
     // The cross-bot Needs attention section rides above every roster section.
-    val attention = remember(state) { state.crossBotAttention() }
+    val attention = remember(state.bots, state.pendingQueued) { state.crossBotAttention() }
 
     val queuedThreadIds = state.queuedThreadIds
     val toggleBot: (String) -> Unit = { botId ->
@@ -571,7 +575,12 @@ fun RosterScreen(navigator: CompanionNavigator) {
     }
 
     if (showingUpdates) {
+        val updateFaces = remember(state, updates) {
+            updates.associate { it.id to faceCache.face(it.chat, state, projections) }
+        }
         UpdatesSheet(
+            updates = updates,
+            faces = updateFaces,
             onOpen = { chat ->
                 showingUpdates = false
                 navigator.open(chat)
