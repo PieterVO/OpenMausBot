@@ -83,7 +83,10 @@ struct MausAvatar: View {
     /// Set by a screen that can show many busy faces at once (comfortable
     /// Home), so only so many of them move; nil everywhere else.
     @Environment(\.mascotMotionBudget) private var motionBudget
-    @State private var engine = MausFaceEngine()
+    /// Created once per mounted face: `@State`'s initial value is evaluated on
+    /// every init of the view (and discarded after the first), so a roster
+    /// re-render used to allocate an engine per avatar each time.
+    @StateObject private var engine = MausFaceEngine()
 
     var body: some View {
         if animated, let motionBudget {
@@ -211,7 +214,7 @@ struct MausFaceStill: View {
 
 /// The face, frame by frame. One per drawn mascot; holds the morph in
 /// progress, the blink, and when the next expression or blink is due.
-final class MausFaceEngine {
+final class MausFaceEngine: ObservableObject {
     private(set) var state: MausState = .idle
     private var expression = 0
     private var currentRings: [[CGPoint]] = [MausFaceData.ring(0, eye: 0), MausFaceData.ring(0, eye: 1)]

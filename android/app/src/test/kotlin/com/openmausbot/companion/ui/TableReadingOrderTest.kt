@@ -1,22 +1,35 @@
 package com.openmausbot.companion.ui
 
+import android.content.ClipboardManager
+import android.content.Context
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.layout.Layout
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.SemanticsNode
+import androidx.compose.ui.semantics.SemanticsActions
 import androidx.compose.ui.semantics.SemanticsProperties
 import androidx.compose.ui.semantics.getOrNull
 import androidx.compose.ui.test.SemanticsMatcher
+import androidx.compose.ui.test.ExperimentalTestApi
 import androidx.compose.ui.test.getBoundsInRoot
+import androidx.compose.ui.test.getUnclippedBoundsInRoot
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onNodeWithTag
+import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.onRoot
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.height
+import androidx.compose.ui.test.performClick
+import androidx.compose.ui.test.performCustomAccessibilityActionWithLabel
 import androidx.compose.ui.unit.width
+import com.openmausbot.companion.core.MarkdownTableAlignment
 import com.openmausbot.companion.core.TranscriptCard
 import kotlin.math.abs
 import kotlin.test.assertEquals
@@ -25,6 +38,7 @@ import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
+import org.robolectric.RuntimeEnvironment
 import org.robolectric.annotation.Config
 
 /**
@@ -39,6 +53,7 @@ import org.robolectric.annotation.Config
  * semantics tree, which is why this file mounts the real composition under
  * Robolectric rather than reasoning about the model.
  */
+@OptIn(ExperimentalTestApi::class)
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [34])
 class TableReadingOrderTest {
@@ -54,6 +69,16 @@ class TableReadingOrderTest {
             listOf("Rust", "2010"),
         ),
     )
+
+    private val quotedTable = TranscriptCard.Table(
+        headers = listOf("name", "notes"),
+        rows = listOf(
+            listOf("Coast, west", "Bring \"tea\""),
+            listOf("Café", "two\nlines"),
+        ),
+    )
+
+    private val quotedCsv = "name,notes\n\"Coast, west\",\"Bring \"\"tea\"\"\"\nCafé,\"two\nlines\""
 
     /**
      * Everything the merged tree carries, in the order the tree carries it.
@@ -84,12 +109,11 @@ class TableReadingOrderTest {
     fun `the tree reads by row, headings first, the way iOS does`() {
         assertEquals(
             listOf(
-                "DATA TABLE", "3 rows",
-                "LANGUAGE", "YEAR",
+                "language", "year",
                 "Python", "1991",
                 "Java", "1995",
                 "Rust", "2010",
-                "Copy CSV",
+                "Copy table as CSV",
             ),
             spokenCard(languages),
         )
@@ -103,14 +127,61 @@ class TableReadingOrderTest {
         )
         assertEquals(
             listOf(
-                "DATA TABLE", "2 rows",
-                "LANGUAGE", "YEAR",
+                "language", "year",
                 "Python", "1991",
                 "Java", "",
-                "Copy CSV",
+                "Copy table as CSV",
             ),
             spokenCard(ragged),
         )
+    }
+
+    @Test
+    fun `the table has a stable container and only a top trailing 48dp copy icon`() {
+        compose.setContent { CompanionTheme(darkTheme = false) { DataTableCard(languages) } }
+
+        val table = compose.onNodeWithTag("data-table").assertExists()
+        compose.onNodeWithText("DATA TABLE").assertDoesNotExist()
+        compose.onNodeWithText("3 rows").assertDoesNotExist()
+        compose.onNodeWithText("Copy CSV").assertDoesNotExist()
+
+        val button = compose.onNodeWithContentDescription("Copy table as CSV")
+        val buttonBounds = button.getBoundsInRoot()
+        val tableBounds = table.getBoundsInRoot()
+        assertEquals(48f, buttonBounds.width.value, 0.5f, "copy target width")
+        assertEquals(48f, buttonBounds.height.value, 0.5f, "copy target height")
+        assertEquals(tableBounds.top.value, buttonBounds.top.value, 0.5f, "copy target top")
+        assertEquals(tableBounds.right.value, buttonBounds.right.value, 0.5f, "copy target trailing edge")
+        assertEquals(
+            listOf("Copy table as CSV"),
+            table.fetchSemanticsNode().config[SemanticsActions.CustomActions].map { it.label },
+        )
+    }
+
+    @Test
+    fun `the copy icon writes the exact CSV with commas quotes and newlines`() {
+        compose.setContent { CompanionTheme(darkTheme = false) { DataTableCard(quotedTable) } }
+
+        compose.onNodeWithContentDescription("Copy table as CSV").performClick()
+        assertClipboard(quotedCsv)
+    }
+
+    @Test
+    fun `the TalkBack custom action writes the same exact CSV`() {
+        compose.setContent { CompanionTheme(darkTheme = false) { DataTableCard(quotedTable) } }
+
+        compose.onNodeWithTag("data-table").performCustomAccessibilityActionWithLabel("Copy table as CSV")
+        assertClipboard(quotedCsv)
+    }
+
+    private fun assertClipboard(expected: String) {
+        compose.runOnIdle {
+            val clipboard = RuntimeEnvironment.getApplication()
+                .getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+            val clip = requireNotNull(clipboard.primaryClip)
+            assertEquals(1, clip.itemCount)
+            assertEquals(expected, clip.getItemAt(0).text.toString())
+        }
     }
 
     @Test
@@ -120,9 +191,9 @@ class TableReadingOrderTest {
         fun left(text: String) = compose.onNodeWithText(text).fetchSemanticsNode().boundsInRoot.left
         fun top(text: String) = compose.onNodeWithText(text).fetchSemanticsNode().boundsInRoot.top
 
-        val first = left("LANGUAGE")
+        val first = left("language")
         listOf("Python", "Java", "Rust").forEach { assertEquals(first, left(it), 0.5f, it) }
-        val second = left("YEAR")
+        val second = left("year")
         listOf("1991", "1995", "2010").forEach { assertEquals(second, left(it), 0.5f, it) }
         assertTrue(second > first, "the second column has to sit to the right of the first")
 
@@ -130,6 +201,23 @@ class TableReadingOrderTest {
         assertEquals(top("Java"), top("1995"), 0.5f, "Java/1995")
         assertEquals(top("Rust"), top("2010"), 0.5f, "Rust/2010")
         assertTrue(top("Java") > top("Python"), "row two sits below row one")
+    }
+
+    @Test
+    fun `delimiter alignment still places trailing and centered cells in their columns`() {
+        val aligned = TranscriptCard.Table(
+            headers = listOf("name", "count", "status"),
+            rows = listOf(listOf("Python", "1", "up"), listOf("Java", "123456", "ready")),
+            alignments = listOf(MarkdownTableAlignment.LEADING, MarkdownTableAlignment.TRAILING, MarkdownTableAlignment.CENTER),
+        )
+        compose.setContent { CompanionTheme(darkTheme = false) { DataTableCard(aligned) } }
+
+        fun bounds(text: String) = compose.onNodeWithText(text).getBoundsInRoot()
+        assertEquals(bounds("count").right.value, bounds("1").right.value, 0.5f, "trailing short cell")
+        assertEquals(bounds("count").right.value, bounds("123456").right.value, 0.5f, "trailing wide cell")
+        fun center(text: String) = bounds(text).let { (it.left.value + it.right.value) / 2f }
+        assertEquals(center("status"), center("up"), 0.5f, "centered short cell")
+        assertEquals(center("status"), center("ready"), 0.5f, "centered wider cell")
     }
 
     @Test
@@ -147,42 +235,71 @@ class TableReadingOrderTest {
     }
 
     /**
-     * The rule under a heading, measured against the production policy itself.
-     *
-     * The children here are the test's own — three headings, three rules, one
-     * row — but [tableGridMeasurePolicy] is the one the card uses, so what the
-     * rules come back measuring is what the card's rules measure. Doing it this
-     * way keeps test tags out of the drawing, where they would be scaffolding
-     * sitting in front of a screen reader.
+     * The production policy measures one rule per row boundary, not one per
+     * column. These test-owned nodes expose its actual full-width constraints
+     * and row positions without adding decorative test scaffolding to the UI.
      */
     @Test
-    fun `each rule is as wide as its own column, floored at the iOS minimum`() {
+    fun `continuous separators span every column and gutter after the tallest cell`() {
         compose.setContent {
             Layout(
+                modifier = Modifier.horizontalScroll(rememberScrollState()),
                 content = {
-                    Box(Modifier.size(width = 120.dp, height = 12.dp))
-                    Box(Modifier.size(width = 30.dp, height = 12.dp))
-                    Box(Modifier.size(width = 20.dp, height = 12.dp))
-                    repeat(3) { Box(Modifier.testTag("rule-$it").height(1.dp)) }
-                    Box(Modifier.size(width = 40.dp, height = 10.dp))
-                    Box(Modifier.size(width = 200.dp, height = 10.dp))
-                    Box(Modifier.size(width = 20.dp, height = 10.dp))
+                    Box(Modifier.testTag("header-fill"))
+                    Box(Modifier.testTag("heading-0").size(width = 120.dp, height = 60.dp))
+                    Box(Modifier.testTag("heading-1").size(width = 30.dp, height = 12.dp))
+                    Box(Modifier.testTag("heading-2").size(width = 20.dp, height = 12.dp))
+                    Box(Modifier.testTag("cell-0-0").size(width = 40.dp, height = 10.dp))
+                    Box(Modifier.testTag("cell-0-1").size(width = 200.dp, height = 30.dp))
+                    Box(Modifier.testTag("cell-0-2").size(width = 20.dp, height = 10.dp))
+                    repeat(3) { column ->
+                        Box(Modifier.testTag("cell-1-$column").size(width = 20.dp, height = 10.dp))
+                    }
+                    repeat(2) { Box(Modifier.testTag("rule-$it").height(1.dp)) }
                 },
-                measurePolicy = tableGridMeasurePolicy(columnCount = 3),
+                measurePolicy = tableGridMeasurePolicy(columnCount = 3, rowCount = 2),
             )
         }
 
-        fun rule(index: Int) = compose.onNodeWithTag("rule-$index").getBoundsInRoot()
+        fun bounds(tag: String) = compose.onNodeWithTag(tag).getUnclippedBoundsInRoot()
 
-        // Widest heading, widest cell, and a column where nothing reaches 64.dp.
-        assertEquals(120f, rule(0).width.value, 0.5f, "column 0")
-        assertEquals(200f, rule(1).width.value, 0.5f, "column 1")
-        assertEquals(64f, rule(2).width.value, 0.5f, "column 2")
+        // 120.dp heading + 200.dp body cell + 64.dp floor + two 18.dp gutters.
+        assertEquals(420f, bounds("header-fill").width.value, 0.5f, "full header width")
+        assertEquals(60f, bounds("header-fill").height.value, 0.5f, "measured tall header")
+        repeat(2) { row ->
+            assertEquals(420f, bounds("rule-$row").width.value, 0.5f, "continuous rule $row")
+            assertEquals(0f, bounds("rule-$row").left.value, 0.5f, "rule $row origin")
+        }
 
-        // And they start where their columns start: 18.dp of gutter between.
-        assertEquals(0f, rule(0).left.value, 0.5f, "column 0 origin")
-        assertEquals(138f, rule(1).left.value, 0.5f, "column 1 origin")
-        assertEquals(356f, rule(2).left.value, 0.5f, "column 2 origin")
+        // The same content-derived columns still align, with real gutters.
+        listOf(0f, 138f, 356f).forEachIndexed { column, x ->
+            assertEquals(x, bounds("heading-$column").left.value, 0.5f, "heading $column origin")
+            repeat(2) { row ->
+                assertEquals(x, bounds("cell-$row-$column").left.value, 0.5f, "cell $row/$column origin")
+            }
+        }
+        assertEquals(64f, bounds("rule-0").top.value, 0.5f, "header boundary")
+        assertEquals(69f, bounds("cell-0-0").top.value, 0.5f, "first row top")
+        assertEquals(103f, bounds("rule-1").top.value, 0.5f, "boundary after tallest first-row cell")
+        assertEquals(108f, bounds("cell-1-0").top.value, 0.5f, "second row top")
+    }
+
+    @Test
+    fun `a narrow grid stretches its continuous rule to the viewport`() {
+        compose.setContent {
+            Layout(
+                modifier = Modifier.width(300.dp).horizontalScroll(rememberScrollState()),
+                content = {
+                    Box(Modifier.testTag("header-fill"))
+                    repeat(4) { Box(Modifier.size(20.dp)) }
+                    Box(Modifier.testTag("rule").height(1.dp))
+                },
+                measurePolicy = tableGridMeasurePolicy(columnCount = 2, rowCount = 1),
+            )
+        }
+
+        assertEquals(300f, compose.onNodeWithTag("header-fill").getBoundsInRoot().width.value, 0.5f, "header viewport width")
+        assertEquals(300f, compose.onNodeWithTag("rule").getBoundsInRoot().width.value, 0.5f, "rule viewport width")
     }
 
     private fun assertEquals(expected: Float, actual: Float, delta: Float, what: String) {

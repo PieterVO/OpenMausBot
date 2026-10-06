@@ -78,8 +78,7 @@ internal fun RoutineRunCardView(message: Message, openRun: (() -> Unit)?) {
         modifier = Modifier
             .widthIn(max = 520.dp)
             .fillMaxWidth()
-            .background(secondaryTint.copy(alpha = 0.10f), RoundedCornerShape(18.dp))
-            .border(1.dp, secondaryTint.copy(alpha = 0.18f), RoundedCornerShape(18.dp))
+            .background(chatTint.theirs, RoundedCornerShape(20.dp))
             .padding(horizontal = 14.dp, vertical = 12.dp),
         verticalArrangement = Arrangement.spacedBy(6.dp),
     ) {
@@ -168,71 +167,3 @@ internal fun RoutineRunCardView(message: Message, openRun: (() -> Unit)?) {
     }
 }
 
-/**
- * The turn digest as a quiet outlined chip under the reply, and on tap the
- * sections it lists. The row's raw text is a log line for the model's next
- * turn; the chip is how a person gets at it without reading one.
- */
-@Composable
-internal fun TurnDigestChip(message: Message) {
-    val digest = remember(message.text) { TurnDigest.parse(message.text) }
-    var open by remember(message.id) { mutableStateOf(false) }
-    val haptics = rememberHaptics()
-    Row(
-        modifier = Modifier
-            .padding(start = 4.dp)
-            .heightIn(min = MIN_TOUCH_TARGET)
-            .clickable(role = Role.Button) {
-                haptics.play(TactileAction.TOGGLE_ACTIVITY_RUN)
-                open = true
-            },
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        Row(
-            modifier = Modifier
-                .border(1.dp, secondaryTint.copy(alpha = 0.35f), RoundedCornerShape(14.dp))
-                .padding(horizontal = 10.dp, vertical = 4.dp),
-            horizontalArrangement = Arrangement.spacedBy(6.dp),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            Box(
-                modifier = Modifier.size(6.dp).background(secondaryTint, CircleShape),
-            )
-            Text(digest.chipLabel, fontSize = 12.sp, color = secondaryTint, maxLines = 1)
-        }
-    }
-    if (open) {
-        AlertDialog(
-            onDismissRequest = { open = false },
-            title = { Text(TurnDigest.CHIP_TITLE) },
-            text = {
-                Column(
-                    modifier = Modifier.heightIn(max = 420.dp).verticalScroll(rememberScrollState()),
-                    verticalArrangement = Arrangement.spacedBy(12.dp),
-                ) {
-                    if (digest.sections.isEmpty()) {
-                        Text("Nothing was recorded for this turn.", fontSize = 14.sp, color = secondaryTint)
-                    }
-                    digest.sections.forEach { section ->
-                        Column(verticalArrangement = Arrangement.spacedBy(3.dp)) {
-                            section.label?.let {
-                                Text(
-                                    it.replaceFirstChar { c -> c.uppercase() },
-                                    fontSize = 12.sp,
-                                    fontWeight = FontWeight.SemiBold,
-                                    color = secondaryTint,
-                                )
-                            }
-                            SelectionContainer {
-                                Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
-                                    section.items.forEach { item -> Text(item, fontSize = 14.sp) }
-                                }
-                            }
-                        }
-                    }
-                }
-            },
-            confirmButton = { TextButton(onClick = { open = false }) { Text("Done") } },
-        )
-    }
-}

@@ -2,6 +2,7 @@ package com.openmausbot.companion.core
 
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertSame
 import kotlin.test.assertTrue
 
 class MarkdownTest {
@@ -172,13 +173,123 @@ class MarkdownTest {
         }
     }
 
+    @Test
+    fun incrementalMatchesEveryPrefixOfBlockAndTableFixtures() {
+        val sources = listOf(
+            "# Result\n\nRan **two** checks:\n\n- `test` passed\n- [x] done\n1. [ ] next\n\n> quoted\n---\nTail",
+            "Title\n===\nSubtitle\n---\n- item\n  continuation\n  - child\n    continuation\n\nAfter",
+            "Lead\n| A | B |\n| :-- | --: |\n| 1 | 2 |\n| 3 | 4 | 5 |\n| 6 |\nAfter | prose\n\nEnd",
+            "A | B\n- | -\n1 | 2\n3 | 4\n\nEnd",
+            "| A | B | |---|---| | | 2 | | 3 | 4 |\n| 5 | 6 |\n\nEnd",
+            "| `a|b` | c |\n| - | - |\n| x \\| y | z |\n| `partial\n\nAfter",
+            "- intro\n  | A | B |\n  | --- | --- |\n  | 1 | 2 |\n- next\n  > note\n  | A | B |\n  | - | - |\n\nEnd",
+            "before\n```kotlin\n# literal\n\n| A | B |\n| - | - |\n**code `\n```\n\nAfter",
+            "~~~text\nliteral\n\n~~~\n# Heading\nTail",
+            "```unclosed\n- literal\n\n| A | B |\n| - | - |\n**tail",
+            "````lang\n```\n\n**still fenced\n````\nTail",
+            "**before\n```lang\nliteral\n``` not a closing fence\n\n**still literal",
+            "    ```indented\nliteral\n```\n**outside",
+            "**one\n## Heading\n- `two\n\n**next `code",
+            "\\**literal\n**word \\\n\n`code \\`\n\n👨‍👩‍👧‍👦 e\u0301 🇺🇸",
+            "\r\n# Heading\r\n\r\n| A | B |\r\n| - | - |\r\n| 1 | 2 |\r\n\r\nTail",
+            "# Heading\r\r- parent\r  - child\r  continuation\r\r```lang\rcode\r```\rTail",
+        )
+        for (source in sources) assertIncrementalPrefixes(source)
+    }
+
+    @Test
+    fun incrementalMatchesEveryPrefixOfAdjacentSyntaxCombinations() {
+        val lines = listOf(
+            "", "plain", "**open", "`code", "# Heading", "> quote", "---", "===",
+            "- item", "  - nested", "1. [x] task", "  continuation",
+            "| A | B |", "| - | - |", "| 1 | 2 | 3 |", "| `open | code |",
+            "| A | B | |---|---| | 1 | 2 |", "```", "~~~", "``` not a closer",
+        )
+        for (first in lines) for (second in lines) {
+            assertIncrementalPrefixes("# Settled\n\n$first\n$second\nTail")
+        }
+    }
+
+    @Test
+    fun incrementalResetsForReplacementRewindAndEmptySource() {
+        for (closing in listOf(false, true)) {
+            val parser = Markdown.Incremental()
+            for (source in listOf(
+                "# First\n\n- item\nTail",
+                "# First\n\n- item\nTail appended",
+                "# Replacement\n\n| A | B |\n| - | - |\n| 1 | 2 |",
+                "# Replacement\n\n| A | B |\n| - | - |\n| changed | row |",
+                "# Replacement",
+                "",
+                "```new\n**literal",
+                "```new\n**literal\n```\n\nDone",
+            )) {
+                val expected = Markdown.blocks(if (closing) StreamingText.closePartialMarkdown(source) else source)
+                assertEquals(expected, parser.blocks(source, closePartial = closing), source)
+            }
+            val source = "# Fixed\n\n**mutable tail"
+            parser.blocks(source, closePartial = closing)
+            for (end in source.length downTo 0) {
+                val prefix = source.take(end)
+                assertEquals(
+                    Markdown.blocks(if (closing) StreamingText.closePartialMarkdown(prefix) else prefix),
+                    parser.blocks(source, end, closePartial = closing),
+                    "rewind $end, closing=$closing",
+                )
+            }
+        }
+    }
+
+    @Test
+    fun incrementalCanSwitchBetweenRawAndTemporarilyClosedMarkdown() {
+        val source = "**open\n# Heading\n- item\nTail"
+        val parser = Markdown.Incremental()
+        for (closing in listOf(false, true, false, true)) {
+            assertEquals(
+                Markdown.blocks(if (closing) StreamingText.closePartialMarkdown(source) else source),
+                parser.blocks(source, closePartial = closing),
+                "closing=$closing",
+            )
+        }
+    }
+
+    @Test
+    fun incrementalReusesSettledBlocksAndUnchangedFrameResults() {
+        val parser = Markdown.Incremental()
+        val source = "# Heading\n\n| A | B |\n| - | - |\n| 1 | 2 |\n\n- parent\n  - child\n\n**Mutable tail"
+        val tailStart = source.indexOf("**Mutable")
+        val first = parser.blocks(source, tailStart, closePartial = true)
+        assertTrue(parser.settledSourceLength > 0)
+        for (end in tailStart + 1..source.length) {
+            val next = parser.blocks(source, end, closePartial = true)
+            first.forEachIndexed { index, block -> assertSame(block, next[index], "settled block $index at $end") }
+            assertSame(next, parser.blocks(source, end, closePartial = true), "unchanged frame at $end")
+        }
+        assertEquals(Markdown.blocks(source), parser.blocks(source, closePartial = false))
+    }
+
+    private fun assertIncrementalPrefixes(source: String) {
+        val raw = Markdown.Incremental()
+        val closed = Markdown.Incremental()
+        val batches = Markdown.Incremental()
+        for (end in 0..source.length) {
+            val prefix = source.take(end)
+            assertEquals(Markdown.blocks(prefix), raw.blocks(source, end), "raw prefix $end: $source")
+            val expected = Markdown.blocks(StreamingText.closePartialMarkdown(prefix))
+            assertEquals(expected, closed.blocks(source, end, closePartial = true), "closed prefix $end: $source")
+            assertEquals(expected, batches.blocks(prefix, closePartial = true), "appended batch $end: $source")
+        }
+    }
+
     private fun text(block: MarkdownBlock): String = when (block) {
         is MarkdownBlock.Paragraph -> block.text
         is MarkdownBlock.Bullet -> block.text
         is MarkdownBlock.Ordered -> block.number.toString() + block.text
+        is MarkdownBlock.Task -> (block.number?.toString() ?: "") + block.text
         is MarkdownBlock.Heading -> block.text
         is MarkdownBlock.Code -> block.language.orEmpty() + block.text
         is MarkdownBlock.Quote -> block.text
+        is MarkdownBlock.Table -> (block.headers + block.rows.flatten()).joinToString("")
         MarkdownBlock.Rule -> ""
     }
 }

@@ -26,6 +26,7 @@ struct CompanionApp: App {
         WindowGroup {
             RootView()
                 .environmentObject(session)
+                .environment(\.sessionActions, session)
                 .environmentObject(liveCall)
                 .environment(\.avatarLoader, AvatarLoader(session: session))
                 // One modifier is the whole language seam. SwiftUI resolves a

@@ -49,7 +49,7 @@ final class WidgetSyncBridge {
         // clear the snapshot even when no state change would have said so.
         // A fixed window keeps startup's grace without waiting forever for
         // a busy fleet to go quiet. Empty windows publish nothing.
-        cancellable = Publishers.CombineLatest(session.$state, session.$connection)
+        cancellable = Publishers.CombineLatest(session.statePublisher, session.$connection)
             .collect(.byTime(DispatchQueue.main, .milliseconds(400)))
             .compactMap(\.last)
             .sink { [weak self] state, connection in

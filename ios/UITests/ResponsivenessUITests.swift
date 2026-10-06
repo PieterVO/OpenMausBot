@@ -17,7 +17,15 @@ final class ResponsivenessUITests: XCTestCase {
             "-companion.onboarding.notificationsSeen", "YES"
         ]
         app.launch()
+        // Twenty working fixture bots fill "Needs attention" above the bot
+        // rows; Pepper's row is below them in the lazily built list.
+        XCTAssertTrue(app.descendants(matching: .any)["roster-list"].waitForExistence(timeout: 10))
         let threads = app.buttons["threads-toggle.preview-pepper"]
+        var swipes = 0
+        while !threads.exists, swipes < 10 {
+            app.swipeUp()
+            swipes += 1
+        }
         XCTAssertTrue(threads.waitForExistence(timeout: 10))
         threads.tap()
         app.buttons["thread.preview-gmail"].tap()

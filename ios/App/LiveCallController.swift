@@ -75,7 +75,7 @@ final class LiveCallController: ObservableObject {
     func attach(to session: Session) {
         self.session = session
         cancellables.removeAll()
-        session.$state
+        session.statePublisher
             .map(\.liveCall)
             .removeDuplicates()
             .dropFirst()

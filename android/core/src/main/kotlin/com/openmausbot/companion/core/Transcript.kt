@@ -4,10 +4,9 @@ import java.text.BreakIterator
 import java.util.Locale
 
 /**
- * The two shapes a bot reply can be *entirely* on Android, and the cut the
- * reasoning chamber shows. iOS no longer turns a whole-message pipe table into
- * a SQL card; matching that is issue 1707. This file still owns Android's
- * all-or-nothing gate, its CSV quoting, and the reasoning suffix.
+ * Whole-message diff and table cards, and the reasoning suffix. Tables share
+ * the Markdown block parser so the same cells, alignment and padding appear
+ * inside a reply and in a whole-message card. CSV always includes every cell.
  *
  * The gates are deliberately all-or-nothing. A reply that *contains* a patch or
  * a table is still a reply: turning it into a card would hide the sentences
@@ -39,10 +38,11 @@ sealed interface TranscriptCard {
         }
     }
 
-    /** A strict Markdown table: a header, its separator, and uniform rows. */
+    /** A whole-message Markdown table, with row-major data for reading and copy. */
     data class Table(
         val headers: List<String>,
         val rows: List<List<String>>,
+        val alignments: List<MarkdownTableAlignment> = List(headers.size) { MarkdownTableAlignment.LEADING },
     ) : TranscriptCard {
         /** Header row first, exactly as iOS builds `[columns] + rows`. */
         fun csv(): String = Csv.of(listOf(headers) + rows)
@@ -101,77 +101,19 @@ object TranscriptCards {
         firstLine.split(' ').lastOrNull { it.isNotEmpty() }?.replace("b/", "") ?: GIT_PATCH
 
     /**
-     * A table, or null — and null for everything that is nearly one.
-     *
-     * Every non-blank line must be a row (edge pipes included), so a sentence
-     * above or below the table disqualifies the whole message. The separator
-     * needs at least three hyphens, and every row needs exactly as many cells as
-     * the header: a ragged table is a table the reader would misread, and a
-     * misread table is worse than a paragraph.
+     * A table only when the entire reply is one table block. Prose, another
+     * block, or a blank line separating the body keeps it a normal reply; the
+     * Markdown renderer can still show any embedded table without losing text.
      */
     fun table(source: String): TranscriptCard.Table? {
-        val lines = source.lines().map(String::trim).filter(String::isNotEmpty)
-        if (lines.size < MINIMUM_TABLE_LINES) return null
-        if (!lines.all { it.startsWith("|") && it.endsWith("|") }) return null
-
-        val headers = cells(lines[0])
-        if (headers.isEmpty()) return null
-        val separators = cells(lines[1])
-        if (separators.size != headers.size) return null
-        if (!separators.all(::isSeparator)) return null
-
-        val rows = lines.drop(2).map(::cells)
-        if (!rows.all { it.size == headers.size }) return null
-        return TranscriptCard.Table(headers, rows)
-    }
-
-    /**
-     * One row into its cells, honouring `\|` — a pipe a cell means literally is
-     * not a column boundary, and splitting on it would ruin every row after it.
-     * Any other backslash is kept as typed.
-     */
-    fun cells(line: String): List<String> {
-        var body = line
-        if (body.firstOrNull() == '|') body = body.substring(1)
-        if (body.lastOrNull() == '|') body = body.dropLast(1)
-
-        val out = ArrayList<String>()
-        val cell = StringBuilder()
-        var escaped = false
-        for (character in body) {
-            when {
-                escaped -> {
-                    if (character != '|') cell.append('\\')
-                    cell.append(character)
-                    escaped = false
-                }
-
-                character == '\\' -> escaped = true
-                character == '|' -> {
-                    out += cell.toString().trim()
-                    cell.setLength(0)
-                }
-
-                else -> cell.append(character)
-            }
-        }
-        if (escaped) cell.append('\\')
-        out += cell.toString().trim()
-        return out
-    }
-
-    /** `---`, `:---`, `---:` or `:---:` — three hyphens at the very least. */
-    private fun isSeparator(cell: String): Boolean {
-        val core = cell.replace(" ", "").trim(':')
-        return core.length >= MINIMUM_SEPARATOR_HYPHENS && core.all { it == '-' }
+        val table = Markdown.blocks(source).singleOrNull() as? MarkdownBlock.Table ?: return null
+        return TranscriptCard.Table(table.headers, table.rows, table.alignments)
     }
 
     private const val DIFF_FENCE = "```diff"
     private const val FENCE = "```"
     private const val GIT_HEADER = "diff --git "
     private const val GIT_PATCH = "Git patch"
-    private const val MINIMUM_TABLE_LINES = 3
-    private const val MINIMUM_SEPARATOR_HYPHENS = 3
 }
 
 /**

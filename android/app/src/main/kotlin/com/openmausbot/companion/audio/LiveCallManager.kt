@@ -10,6 +10,7 @@ import com.openmausbot.companion.core.Session
 import com.openmausbot.companion.ui.LiveCallRules
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -17,6 +18,7 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withTimeoutOrNull
 
 /** Asks for the microphone; `MicPermissionController.ensure` in production. */
 fun interface MicrophoneAccess {
@@ -80,17 +82,17 @@ class LiveCallManager internal constructor(
     /** Our `oai-events` data channel is open. */
     private var channelOpen = false
 
-    /** Bumped by every [start]: the generation guard for a microphone answer that outlives its attempt. */
+    /** Bumped by every [start] and computer switch; guards delayed microphone answers and start responses. */
     private var attempts = 0
 
     /**
      * The computer's latest report, whatever it was about. A frame about this
-     * phone's call can beat the 201 that names it; [connect] reads it again
+     * phone's call can beat the 201 that names it; [startOnServer] reads it again
      * once the id is known.
      */
     private var lastServerCall: LiveCallState? = null
 
-    /** The id of the last call the computer created for this phone, kept across attempts: a 409 naming it is our own call winding down. */
+    /** The last call this computer created for this phone, kept across attempts: a 409 naming it is our own call winding down. */
     private var lastCallId: String? = null
 
     /** Ends the call if its audio never connects ([armConnectDeadline]); null when no call is waiting on its audio. */
@@ -99,11 +101,31 @@ class LiveCallManager internal constructor(
     /** Stops "Hanging up…" waiting for a computer that never answers ([END_TIMEOUT_MS]). */
     private var endDeadline: Job? = null
 
+    /** Offer/answer work belongs to the media, not to the app's lifetime. */
+    private var mediaJob: Job? = null
+
+    /** Server cleanup is bounded and stops early when that call is confirmed ended. */
+    private val endRequests = mutableMapOf<String, Job>()
+
     /** The computer this phone follows and whether its pairing stands; null before the first report. */
     private var link: LiveCallLink? = null
 
+    /** A late request may clean up its old attempt, but never act on a different computer. */
+    private var computerGeneration = 0
+
     init {
-        scope.launch { api.serverCall.collect { onServerCall(it) } }
+        scope.launch {
+            try {
+                api.serverCall.collect { onServerCall(it) }
+            } finally {
+                // The collectors are app-scoped: they must survive individual
+                // calls, but cancellation of their owner must also free media.
+                if (_state.value.holdsMedia) {
+                    endLocally(LiveCallRules.CALL_ENDED, tellComputer = false, canRetry = false)
+                }
+                clearEndingWork()
+            }
+        }
         scope.launch { api.link.collect { onLink(it) } }
     }
 
@@ -140,7 +162,10 @@ class LiveCallManager internal constructor(
                 settle(LiveCallRules.MIC_DENIED_MESSAGE, canRetry = false)
                 return@ensure
             }
-            scope.launch { connect() }
+            mediaJob = scope.launch(start = CoroutineStart.LAZY) {
+                if (attempt == attempts && _state.value.phase == LiveCallPhase.STARTING) connect(attempt)
+            }
+            mediaJob?.start()
         }
     }
 
@@ -167,8 +192,9 @@ class LiveCallManager internal constructor(
         if (!current.holdsMedia) return
         releaseMedia(tellOpenAi = true)
         val callId = current.callId
+        val computer = computerGeneration
         if (callId == null) {
-            // A 201 that lands later is ended by [connect].
+            // A 201 that lands later is ended by [startOnServer].
             _state.value = LiveCallSnapshot(speaker = preferences.speaker)
             return
         }
@@ -177,10 +203,7 @@ class LiveCallManager internal constructor(
             delay(END_TIMEOUT_MS)
             finishEnding(callId)
         }
-        scope.launch {
-            api.end(callId)
-            finishEnding(callId)
-        }
+        requestEnd(callId, computer, finishHangUp = true)
     }
 
     fun setMuted(muted: Boolean) {
@@ -209,32 +232,46 @@ class LiveCallManager internal constructor(
         endLocally(LiveCallRules.CALL_ENDED, tellComputer = true, canRetry = false)
     }
 
-    private suspend fun connect() {
+    private suspend fun connect(attempt: Int) {
         val target = _state.value
         val botId = target.botId ?: return
         val threadId = target.threadId ?: return
-        val media = transports.create()
+        val media = try {
+            transports.create()
+        } catch (error: CancellationException) {
+            throw error
+        } catch (_: Exception) {
+            settle(LiveCallRules.AUDIO_FAILED_MESSAGE)
+            return
+        }
         transport = media
         seenOnServer = false
         attached = false
         channelOpen = false
-        audio.begin(speaker = target.speaker) {
-            // Another app took the audio: the call ended, it did not drop.
-            scope.launch { if (transport === media) endLocally(LiveCallRules.FOCUS_LOST_MESSAGE, tellComputer = true, canRetry = false) }
-        }
         val offer = try {
+            audio.begin(speaker = target.speaker) {
+                // Another app took the audio: the call ended, it did not drop.
+                scope.launch { if (transport === media) endLocally(LiveCallRules.FOCUS_LOST_MESSAGE, tellComputer = true, canRetry = false) }
+            }
+            if (transport !== media) return
             media.offer(listenerFor(media))
         } catch (error: CancellationException) {
             throw error
         } catch (_: Exception) {
-            // A hang-up closes the transport under a pending offer, which then
-            // fails on purpose: that attempt is already over, quietly. Anything
-            // else is this phone's media, worded like a rejected answer.
             if (transport === media) settle(LiveCallRules.AUDIO_FAILED_MESSAGE)
             return
         }
-        // Hung up while the offer was being built: nothing reached the computer.
         if (transport !== media) return
+        // Do not cancel an in-flight POST when media ends: its late 201 still
+        // names a server session that this phone must release. The production
+        // client bounds that request; offer/answer waits remain cancellable.
+        scope.launch { startOnServer(media, attempt, botId, threadId, offer) }
+    }
+
+    private suspend fun startOnServer(media: LiveCallTransport, attempt: Int, botId: String, threadId: String, offer: String) {
+        // The media may have ended before this queued POST got a turn.
+        if (transport !== media) return
+        val computer = computerGeneration
         val started = try {
             api.start(botId, threadId, offer)
         } catch (error: CancellationException) {
@@ -243,15 +280,15 @@ class LiveCallManager internal constructor(
             if (transport === media) settle(error.message?.takeIf { it.isNotBlank() } ?: LiveCallRules.START_FAILED_MESSAGE)
             return
         }
-        if (started is LiveCallStart.Started) lastCallId = started.call.callId
+        if (started is LiveCallStart.Started && attempt == attempts) lastCallId = started.call.callId
         if (transport !== media) {
-            // Hung up, backgrounded or signed out while the computer was
-            // creating the session: release what it created, and leave the
-            // bar as that left it. The id is recorded first so the
-            // computer's echo of it reads as ours.
+            // Preserve this attempt's id for the computer's echo, but never
+            // write an old response into a later attempt or another computer.
             if (started is LiveCallStart.Started) {
-                _state.update { if (!it.active && it.callId == null) it.copy(callId = started.call.callId) else it }
-                scope.launch { api.end(started.call.callId) }
+                if (attempt == attempts) {
+                    _state.update { if (!it.active && it.callId == null) it.copy(callId = started.call.callId) else it }
+                }
+                requestEnd(started.call.callId, computer)
             }
             return
         }
@@ -285,21 +322,24 @@ class LiveCallManager internal constructor(
                 // Armed as the answer goes in rather than after: CONNECTED can
                 // only follow the answer, so its report always finds the deadline.
                 armConnectDeadline(media)
-                try {
-                    media.accept(started.answerSdp)
-                } catch (error: CancellationException) {
-                    throw error
-                } catch (_: Exception) {
-                    if (transport === media) {
-                        // The computer holds a session this phone can never use: release it.
-                        scope.launch { api.end(started.call.callId) }
-                        settle(LiveCallRules.AUDIO_FAILED_MESSAGE)
+                mediaJob = scope.launch(start = CoroutineStart.LAZY) {
+                    try {
+                        media.accept(started.answerSdp)
+                    } catch (error: CancellationException) {
+                        throw error
+                    } catch (_: Exception) {
+                        if (transport === media) {
+                            // The computer holds a session this phone can never use: release it.
+                            requestEnd(started.call.callId, computer)
+                            settle(LiveCallRules.AUDIO_FAILED_MESSAGE)
+                        }
+                        return@launch
                     }
-                    return
+                    if (transport !== media) return@launch
+                    media.setMuted(_state.value.muted)
+                    goLiveIfReady()
                 }
-                if (transport !== media) return
-                media.setMuted(_state.value.muted)
-                goLiveIfReady()
+                mediaJob?.start()
             }
         }
     }
@@ -373,8 +413,10 @@ class LiveCallManager internal constructor(
 
     /** What the computer's word about the line means for this phone's call, phase by phase. */
     private fun applyServerCall(call: LiveCallState?) {
+        if (call?.status == LiveCallStatus.ENDED) endRequests.remove(call.callId)?.cancel()
         val current = _state.value
         val ours = current.callId ?: return
+        if (call == null && seenOnServer) endRequests.remove(ours)?.cancel()
         when (current.phase) {
             LiveCallPhase.STARTING, LiveCallPhase.LIVE -> when {
                 call?.callId == ours -> {
@@ -418,9 +460,49 @@ class LiveCallManager internal constructor(
     private fun finishEnding(callId: String) {
         val current = _state.value
         if (current.phase != LiveCallPhase.ENDING || current.callId != callId) return
+        clearEndingWork(callId)
+        _state.value = LiveCallSnapshot(callId = callId, speaker = preferences.speaker)
+    }
+
+    private fun clearEndingWork(callId: String? = null) {
         endDeadline?.cancel()
         endDeadline = null
-        _state.value = LiveCallSnapshot(callId = callId, speaker = preferences.speaker)
+        if (callId != null) {
+            endRequests.remove(callId)?.cancel()
+        } else {
+            val requests = endRequests.values.iterator()
+            while (requests.hasNext()) {
+                val request = requests.next()
+                requests.remove()
+                request.cancel()
+            }
+        }
+    }
+
+    private fun requestEnd(callId: String, computer: Int, finishHangUp: Boolean = false) {
+        if (computer != computerGeneration || callId in endRequests) return
+        val request = scope.launch(start = CoroutineStart.LAZY) {
+            try {
+                endOnServer(callId, computer)
+                if (finishHangUp) finishEnding(callId)
+            } finally {
+                if (endRequests[callId] === coroutineContext[Job]) endRequests.remove(callId)
+            }
+        }
+        endRequests[callId] = request
+        request.start()
+    }
+
+    /** Best-effort server cleanup must not keep a call's work alive indefinitely. */
+    private suspend fun endOnServer(callId: String, computer: Int) {
+        if (computer != computerGeneration) return
+        try {
+            withTimeoutOrNull(END_TIMEOUT_MS) { api.end(callId) }
+        } catch (error: CancellationException) {
+            throw error
+        } catch (_: Exception) {
+            // The media is already released; a lost/refused end is quiet.
+        }
     }
 
     /**
@@ -444,11 +526,14 @@ class LiveCallManager internal constructor(
 
     /** Quietly, as a deliberate switch should: OpenAI is told, the new computer is not asked about the old one's call. */
     private fun leaveComputer() {
+        ++attempts
+        ++computerGeneration
+        lastCallId = null
+        lastServerCall = null
         val current = _state.value
         if (current.phase == LiveCallPhase.IDLE && current.callId == null) return
         if (current.holdsMedia) releaseMedia(tellOpenAi = true)
-        endDeadline?.cancel()
-        endDeadline = null
+        clearEndingWork()
         _state.value = LiveCallSnapshot(speaker = preferences.speaker)
     }
 
@@ -465,8 +550,9 @@ class LiveCallManager internal constructor(
      */
     private fun endLocally(notice: String, tellComputer: Boolean, canRetry: Boolean) {
         val callId = _state.value.callId
+        val computer = computerGeneration
         releaseMedia(tellOpenAi = true)
-        if (tellComputer && callId != null) scope.launch { api.end(callId) }
+        if (tellComputer && callId != null) requestEnd(callId, computer)
         _state.update { it.copy(phase = LiveCallPhase.ENDED, notice = notice, canRetry = canRetry) }
     }
 
@@ -474,6 +560,8 @@ class LiveCallManager internal constructor(
         clearConnectDeadline()
         val media = transport
         transport = null
+        mediaJob?.cancel()
+        mediaJob = null
         if (media != null) {
             if (tellOpenAi) media.sendClose()
             media.close()

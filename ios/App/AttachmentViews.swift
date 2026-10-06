@@ -58,6 +58,7 @@ struct PendingAttachmentChip: View {
     private var thumbnailKey: String {
         "\(attachment.id)|\(Int((Self.side * displayScale).rounded(.up)))"
     }
+    @Environment(\.botTintColor) private var botTintColor
 
     var body: some View {
         HStack(spacing: 8) {
@@ -65,19 +66,21 @@ struct PendingAttachmentChip: View {
 
             VStack(alignment: .leading, spacing: 1) {
                 Text(attachment.name)
-                    .font(.system(size: 13, weight: .semibold))
+                    .font(.caption.weight(.semibold))
                     .lineLimit(1)
                 Text(ByteCountFormatter.string(fromByteCount: Int64(attachment.data.count), countStyle: .file))
-                    .font(.system(size: 11))
+                    .font(.caption2)
                     .foregroundStyle(Color.secondary)
             }
 
             Button(action: remove) {
                 Image(systemName: "xmark")
-                    .font(.system(size: 10, weight: .bold))
-                    .foregroundStyle(Color.secondary)
-                    .frame(width: 24, height: 24)
-                    .background(Color.secondary.opacity(0.12), in: Circle())
+                    .font(.caption2.weight(.bold))
+                    .foregroundStyle(BotTint.ink(botTintColor))
+                    .frame(width: 28, height: 28)
+                    .background(BotTint.inset, in: Circle())
+                    .frame(width: 44, height: 44)
+                    .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
             .accessibilityLabel("Remove \(attachment.name)")
@@ -86,11 +89,7 @@ struct PendingAttachmentChip: View {
         .padding(.trailing, 6)
         .padding(.vertical, 6)
         .frame(maxWidth: 280, alignment: .leading)
-        .background(Color.secondary.opacity(0.10), in: RoundedRectangle(cornerRadius: 14))
-        .overlay(
-            RoundedRectangle(cornerRadius: 14)
-                .strokeBorder(Color.secondary.opacity(0.10))
-        )
+        .background(BotTint.theirs(botTintColor), in: RoundedRectangle(cornerRadius: 20, style: .continuous))
         .accessibilityElement(children: .contain)
         .task(id: thumbnailKey) { await loadThumbnail() }
     }
@@ -114,7 +113,7 @@ struct PendingAttachmentChip: View {
                 .resizable()
                 .scaledToFill()
                 .frame(width: Self.side, height: Self.side)
-                .clipShape(RoundedRectangle(cornerRadius: 8))
+                .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
                 .accessibilityHidden(true)
         } else if attachment.kind == .image, !thumbnailFailed {
             // The few milliseconds before the first decode lands: the chip's
@@ -125,10 +124,10 @@ struct PendingAttachmentChip: View {
                 .accessibilityHidden(true)
         } else {
             Image(systemName: "doc.fill")
-                .font(.system(size: 15, weight: .medium))
-                .foregroundStyle(Color.accentColor)
+                .font(.subheadline.weight(.medium))
+                .foregroundStyle(BotTint.ink(botTintColor))
                 .frame(width: 34, height: 34)
-                .background(Color.accentColor.opacity(0.12), in: RoundedRectangle(cornerRadius: 8))
+                .background(BotTint.glyphFill(botTintColor), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
                 .accessibilityHidden(true)
         }
     }
@@ -141,9 +140,11 @@ struct TranscriptAttachmentView: View {
     let attachment: DisplayedMessageAttachment
     let threadId: String
     let messageId: String
-    var foreground: Color = BubbleColor.mineText
+    var foreground: Color = .primary
+    var color: String? = nil
 
-    @EnvironmentObject private var session: Session
+    @Environment(\.sessionActions) private var sessionActions
+    @Environment(\.botTintColor) private var botTintColor
     @State private var thumbnail: UIImage?
     @State private var thumbnailLoading = false
     @State private var previewLoading = false
@@ -186,9 +187,12 @@ struct TranscriptAttachmentView: View {
                     Spacer(minLength: 2)
                     Button("Retry", action: retry)
                         .fontWeight(.semibold)
-                        .foregroundStyle(foreground)
+                        .foregroundStyle(BotTint.ink(color ?? botTintColor))
+                        .frame(minWidth: 44, minHeight: 44)
+                        .padding(.horizontal, 8)
+                        .background(BotTint.inset, in: Capsule())
                 }
-                .font(.system(size: 11))
+                .font(.caption)
                 .foregroundStyle(foreground.opacity(0.92))
                 .accessibilityElement(children: .contain)
             }
@@ -234,13 +238,9 @@ struct TranscriptAttachmentView: View {
             VStack(alignment: .leading, spacing: 5) {
                 imageBox(aspect: aspect)
                     .frame(maxWidth: width)
-                    .background(foreground.opacity(0.12))
+                    .background(BotTint.theirs(color ?? botTintColor))
                     .overlay { imageContent }
-                    .clipShape(RoundedRectangle(cornerRadius: 13))
-                    .overlay {
-                        RoundedRectangle(cornerRadius: 13)
-                            .strokeBorder(foreground.opacity(0.18))
-                    }
+                    .clipShape(RoundedRectangle(cornerRadius: 20, style: .continuous))
 
                 HStack(spacing: 5) {
                     Image(systemName: "photo")
@@ -311,19 +311,19 @@ struct TranscriptAttachmentView: View {
         Button(action: openPreview) {
             HStack(spacing: 10) {
                 Image(systemName: fileSymbol)
-                    .font(.system(size: 16, weight: .medium))
-                    .foregroundStyle(foreground)
+                    .font(.body.weight(.medium))
+                    .foregroundStyle(BotTint.ink(color ?? botTintColor))
                     .frame(width: 38, height: 38)
-                    .background(foreground.opacity(0.12), in: RoundedRectangle(cornerRadius: 9))
+                    .background(BotTint.glyphFill(color ?? botTintColor), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
                     .accessibilityHidden(true)
 
                 VStack(alignment: .leading, spacing: 2) {
                     Text(attachment.name)
-                        .font(.system(size: 13, weight: .semibold))
+                        .font(.subheadline.weight(.semibold))
                         .lineLimit(1)
                     Text(previewLoading ? "Opening…" : attachment.fileFamily == .document ? "Tap to preview" : "Tap to play")
-                        .font(.system(size: 11))
-                        .foregroundStyle(foreground.opacity(0.68))
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
                 }
 
                 Spacer(minLength: 8)
@@ -334,20 +334,17 @@ struct TranscriptAttachmentView: View {
                         .accessibilityHidden(true)
                 } else {
                     Image(systemName: "chevron.right")
-                        .font(.system(size: 11, weight: .semibold))
-                        .foregroundStyle(foreground.opacity(0.65))
+                        .font(.caption.weight(.semibold))
+                        .foregroundStyle(.secondary)
                         .accessibilityHidden(true)
                 }
             }
             .foregroundStyle(foreground)
-            .padding(8)
+            .padding(.horizontal, 14)
+            .padding(.vertical, 9)
             .frame(maxWidth: .infinity, alignment: .leading)
-            .background(foreground.opacity(0.10), in: RoundedRectangle(cornerRadius: 13))
-            .overlay {
-                RoundedRectangle(cornerRadius: 13)
-                    .strokeBorder(foreground.opacity(0.12))
-            }
-            .contentShape(RoundedRectangle(cornerRadius: 13))
+            .background(BotTint.theirs(color ?? botTintColor), in: RoundedRectangle(cornerRadius: 20, style: .continuous))
+            .contentShape(RoundedRectangle(cornerRadius: 20, style: .continuous))
         }
         .buttonStyle(.plain)
         .disabled(previewLoading)
@@ -361,6 +358,7 @@ struct TranscriptAttachmentView: View {
         errorMessage = nil
         defer { thumbnailLoading = false }
         do {
+            guard let session = sessionActions else { return }
             let downloaded = try await session.fetchAttachment(
                 threadId: threadId,
                 messageId: messageId,
@@ -407,6 +405,7 @@ struct TranscriptAttachmentView: View {
                 unfinishedItem?.cleanUp()
             }
             do {
+                guard let session = sessionActions else { return }
                 let downloaded = try await session.prepareAttachmentPreview(
                     threadId: threadId,
                     messageId: messageId,

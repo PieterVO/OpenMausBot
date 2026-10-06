@@ -10,7 +10,6 @@ import com.openmausbot.companion.core.OutboundRequest
 import com.openmausbot.companion.core.PendingApproval
 import com.openmausbot.companion.core.QueuedSend
 import com.openmausbot.companion.core.ToolActivity
-import java.util.Locale
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertNotNull
@@ -553,21 +552,6 @@ class UpdatesSummaryTest {
         assertEquals("Working", UpdatesSummary.section(UpdateKind.WORKING))
         assertEquals("To review", UpdatesSummary.section(UpdateKind.TO_REVIEW))
         assertEquals(3, UpdatesSummary.MASCOTS)
-    }
-
-    @Test
-    fun `the heading is uppercased canonically, not for the reader's locale`() {
-        val reader = Locale.getDefault()
-        Locale.setDefault(Locale.forLanguageTag("tr-TR"))
-        try {
-            // Swift's `uppercased()` is the canonical transform; a localised one
-            // would put a dot on the capital I and read WORKİNG here.
-            assertEquals("NEEDS YOU", UpdatesSummary.sectionLabel(UpdateKind.NEEDS_YOU))
-            assertEquals("WORKING", UpdatesSummary.sectionLabel(UpdateKind.WORKING))
-            assertEquals("TO REVIEW", UpdatesSummary.sectionLabel(UpdateKind.TO_REVIEW))
-        } finally {
-            Locale.setDefault(reader)
-        }
     }
 }
 

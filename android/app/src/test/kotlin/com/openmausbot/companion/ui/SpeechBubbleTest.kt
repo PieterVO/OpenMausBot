@@ -24,15 +24,15 @@ class SpeechBubbleTest {
         assertEquals(68f, SpeechBubble.tailDrop(179.dp).value, TOLERANCE)
         // Half the cap, half the drop.
         assertEquals(34f, SpeechBubble.tailDrop(89.5.dp).value, TOLERANCE)
-        // The bubble as the transcript actually draws it: 22 / 179 * 68.
-        assertEquals(22f * 68f / 179f, SpeechBubble.tailDrop(22.dp).value, TOLERANCE)
+        // The shared redesign radius scales the exact same tail geometry.
+        assertEquals(20f * 68f / 179f, SpeechBubble.tailDrop(20.dp).value, TOLERANCE)
         assertEquals(0f, SpeechBubble.tailDrop(0.dp).value, TOLERANCE)
     }
 
     @Test
-    fun `the default radius is the one the Swift declares`() {
-        assertEquals(22f, SpeechBubble.CORNER_RADIUS.value, TOLERANCE)
-        assertEquals(SpeechBubble.tailDrop(), SpeechBubble.tailDrop(22.dp))
+    fun `the default radius follows the shared conversation tokens`() {
+        assertEquals(20f, SpeechBubble.CORNER_RADIUS.value, TOLERANCE)
+        assertEquals(SpeechBubble.tailDrop(), SpeechBubble.tailDrop(20.dp))
     }
 
     @Test
@@ -89,10 +89,21 @@ class SpeechBubbleTest {
     }
 
     @Test
-    fun `what you said is filled with the mascot palette's blue, not the system's`() {
-        // `BubbleColor.mine = MausPalette.color("blue")`, and `mineText = .white`.
-        assertEquals(0xFF377FE6.toInt(), BubbleColor.mine.toArgb())
+    fun `your bubble uses contrast safe deep blue in every skin`() {
+        // The contact-poster design keeps your own bubbles at #2E6FDB.
+        assertEquals(0xFF2E6FDB.toInt(), BubbleColor.mine.toArgb())
         assertEquals(0xFFFFFFFF.toInt(), BubbleColor.mineText.toArgb())
+    }
+
+    @Test
+    fun `logical tails mirror with the conversation in RTL`() {
+        val ltr = androidx.compose.ui.unit.LayoutDirection.Ltr
+        val rtl = androidx.compose.ui.unit.LayoutDirection.Rtl
+        assertEquals(BubbleTail.LEADING, physicalBubbleTail(BubbleTail.LEADING, ltr))
+        assertEquals(BubbleTail.TRAILING, physicalBubbleTail(BubbleTail.TRAILING, ltr))
+        assertEquals(BubbleTail.TRAILING, physicalBubbleTail(BubbleTail.LEADING, rtl))
+        assertEquals(BubbleTail.LEADING, physicalBubbleTail(BubbleTail.TRAILING, rtl))
+        assertEquals(BubbleTail.NONE, physicalBubbleTail(BubbleTail.NONE, rtl))
     }
 
     private companion object {

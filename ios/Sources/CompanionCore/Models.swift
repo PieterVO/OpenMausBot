@@ -144,6 +144,11 @@ public struct ToolActivity: Codable, Hashable, Sendable {
     /// characters) so it can be read without opening the teammate's thread.
     /// Previews still read `name`: the chip label is the summary.
     public var output: String?
+    /// Redacted input previews may be truncated mid-JSON. Plan parsing must
+    /// leave those previews alone rather than guessing at a partial plan.
+    public var input: String?
+    public var summary: String?
+    public var itemId: String?
 
     /// The output worth expanding the chip for; nil when there is none.
     public var expandableOutput: String? {
@@ -217,12 +222,9 @@ public struct CommChip: Codable, Hashable, Sendable {
 public struct Message: Codable, Hashable, Identifiable, Sendable {
     public enum Kind: String, Codable, Sendable {
         case text, options, activity, screen, secret
-        /// The harness's receipt of a settled turn: "[digest] · tools: … ·
-        /// reply: …". Desktop shows it only behind "show tool calls"; it is
-        /// a log line, not something anyone said, so the phone draws it as
-        /// a chip that opens the parts (`DigestSummary`) and never previews
-        /// or speaks it. Named so it cannot fall into `unknown`, which draws
-        /// whatever text a message carries as a bubble.
+        /// A settled turn's work receipt, never something anyone said.
+        /// Conversation summaries have their own visibility preference;
+        /// roster previews and speech always skip them.
         case digest
         case compaction
         /// One background routine run, upserted into the thread that asked
@@ -267,6 +269,10 @@ public struct Message: Codable, Hashable, Identifiable, Sendable {
     /// the final answer visible. Older servers may omit both fields.
     public var turnId: String?
     public var turnTerminal: Bool?
+    public var turnSucceeded: Bool?
+    /// Newer computers include structured evidence alongside the text receipt.
+    /// Unreadable evidence must not discard the message it accompanies.
+    public var digest: TurnDigest?
     public var card: OptionCard?
     public var secret: SecretRequestCardData?
     public var tool: ToolActivity?
@@ -307,6 +313,65 @@ public struct Message: Codable, Hashable, Identifiable, Sendable {
     /// so they read as prose in full rather than as a clipped tool log.
     public var isTeammateReport: Bool {
         kind == .activity && (threadRef != nil || comm != nil) && tool?.expandableOutput != nil
+    }
+}
+
+extension ToolActivity {
+    private enum CodingKeys: String, CodingKey {
+        case name, ok, spoken, setup, claudeUpdate, output, input, summary, itemId
+    }
+
+    public init(from decoder: Decoder) throws {
+        let values = try decoder.container(keyedBy: CodingKeys.self)
+        name = try values.decode(String.self, forKey: .name)
+        ok = try? values.decodeIfPresent(Bool.self, forKey: .ok)
+        spoken = try? values.decodeIfPresent(String.self, forKey: .spoken)
+        setup = try? values.decodeIfPresent(Bool.self, forKey: .setup)
+        claudeUpdate = try? values.decodeIfPresent(Bool.self, forKey: .claudeUpdate)
+        output = try? values.decodeIfPresent(String.self, forKey: .output)
+        input = try? values.decodeIfPresent(String.self, forKey: .input)
+        summary = try? values.decodeIfPresent(String.self, forKey: .summary)
+        itemId = try? values.decodeIfPresent(String.self, forKey: .itemId)
+    }
+}
+
+extension Message {
+    private enum CodingKeys: String, CodingKey {
+        case id, role, kind, at, text, turnId, turnTerminal, turnSucceeded, digest
+        case card, secret, tool, threadRef, compaction, routineRun, parentId, queueId
+        case steered, from, via, reactions, comm, hasImage, png, mime, attachments
+    }
+
+    public init(from decoder: Decoder) throws {
+        let values = try decoder.container(keyedBy: CodingKeys.self)
+        id = try values.decode(String.self, forKey: .id)
+        role = try values.decode(Role.self, forKey: .role)
+        kind = try values.decode(Kind.self, forKey: .kind)
+        at = try values.decode(Double.self, forKey: .at)
+        // Optional presentation hints arrive on the computer's release
+        // schedule. One malformed hint must never cost the whole transcript.
+        text = try? values.decodeIfPresent(String.self, forKey: .text)
+        turnId = try? values.decodeIfPresent(String.self, forKey: .turnId)
+        turnTerminal = try? values.decodeIfPresent(Bool.self, forKey: .turnTerminal)
+        turnSucceeded = try? values.decodeIfPresent(Bool.self, forKey: .turnSucceeded)
+        digest = try? values.decodeIfPresent(TurnDigest.self, forKey: .digest)
+        card = try? values.decodeIfPresent(OptionCard.self, forKey: .card)
+        secret = try? values.decodeIfPresent(SecretRequestCardData.self, forKey: .secret)
+        tool = try? values.decodeIfPresent(ToolActivity.self, forKey: .tool)
+        threadRef = try? values.decodeIfPresent(ThreadRef.self, forKey: .threadRef)
+        compaction = try? values.decodeIfPresent(Compaction.self, forKey: .compaction)
+        routineRun = try? values.decodeIfPresent(RoutineRunCard.self, forKey: .routineRun)
+        parentId = try? values.decodeIfPresent(String.self, forKey: .parentId)
+        queueId = try? values.decodeIfPresent(String.self, forKey: .queueId)
+        steered = try? values.decodeIfPresent(Bool.self, forKey: .steered)
+        from = try? values.decodeIfPresent(Sender.self, forKey: .from)
+        via = try? values.decodeIfPresent(String.self, forKey: .via)
+        reactions = try? values.decodeIfPresent([Reaction].self, forKey: .reactions)
+        comm = try? values.decodeIfPresent(CommChip.self, forKey: .comm)
+        hasImage = try? values.decodeIfPresent(Bool.self, forKey: .hasImage)
+        png = try? values.decodeIfPresent(String.self, forKey: .png)
+        mime = try? values.decodeIfPresent(String.self, forKey: .mime)
+        attachments = try? values.decodeIfPresent([MessageImageAttachment].self, forKey: .attachments)
     }
 }
 

@@ -15,7 +15,11 @@ import kotlin.test.assertNotSame
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
 import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.test.TestScope
 import kotlinx.coroutines.test.advanceTimeBy
@@ -975,6 +979,335 @@ class LiveCallManagerTest {
         assertEquals(0, f.transport.closes)
     }
 
+    // ------------------------------------------------------------ owned work and late callbacks
+
+    @Test
+    fun `stopping before a granted microphone's queued connect runs creates no media`() = runTest {
+        val f = Fixture(this)
+        val collectors = f.activeJobs
+        f.manager.start("b1", "t1", "Ada", grant)
+        f.manager.onStop(TestOwner())
+        val ended = f.manager.state.value
+        runCurrent()
+
+        assertEquals(ended, f.manager.state.value)
+        assertEquals(0, f.transport.offers)
+        assertEquals(0, f.transport.closes)
+        assertTrue(f.audio.begins.isEmpty())
+        assertFalse(f.audio.active)
+        assertTrue(f.api.starts.isEmpty())
+        assertEquals(collectors, f.activeJobs, "the queued media job was cancelled")
+    }
+
+    @Test
+    fun `a queued connect from a hung-up attempt cannot start the next attempt twice`() = runTest {
+        val f = Fixture(this)
+        f.manager.start("b1", "t1", "Ada", grant)
+        f.manager.hangUp()
+        f.manager.start("b2", "t2", "Bo", grant)
+        runCurrent()
+
+        assertEquals(listOf(Triple("b2", "t2", FakeTransport.OFFER)), f.api.starts)
+        assertEquals(1, f.transport.offers)
+        assertEquals(listOf(true), f.audio.begins)
+        assertEquals("t2", f.manager.state.value.threadId)
+    }
+
+    @Test
+    fun `stopping during a suspended offer cancels its job without waiting for a native callback`() = runTest {
+        val f = Fixture(this)
+        val collectors = f.activeJobs
+        f.transport.offerGate = CompletableDeferred()
+        f.manager.start("b1", "t1", "Ada", grant)
+        runCurrent()
+        val offerJob = requireNotNull(f.transport.offerJob)
+        assertTrue(offerJob.isActive)
+        assertTrue(f.transport.offerRunning)
+
+        f.manager.onStop(TestOwner())
+        runCurrent()
+        assertTrue(offerJob.isCancelled)
+        assertTrue(offerJob.isCompleted)
+        assertFalse(f.transport.offerRunning)
+        assertFalse(f.audio.active)
+        assertEquals(1, f.transport.closes)
+        assertEquals(1, f.audio.ends)
+        assertTrue(f.api.starts.isEmpty())
+        assertEquals(collectors, f.activeJobs)
+    }
+
+    @Test
+    fun `every terminal path cancels a suspended answer and ignores released media callbacks`() = runTest {
+        for (ending in listOf("hang-up", "server", "drop", "focus", "sign-out", "stop", "switch")) {
+            val f = Fixture(this)
+            val collectors = f.activeJobs
+            f.transport.acceptGate = CompletableDeferred()
+            f.answered()
+            val media = f.transport
+            val answerJob = requireNotNull(media.acceptJob)
+            val stale = requireNotNull(media.listener)
+            val staleFocus = requireNotNull(f.audio.onFocusLost)
+            assertTrue(answerJob.isActive, ending)
+            assertTrue(media.acceptRunning, ending)
+            stale.onMessage("""{"type":"session.output_transcript.delta","delta":"Before ending"}""")
+            runCurrent()
+            assertEquals("Before ending", f.manager.state.value.caption)
+
+            when (ending) {
+                "hang-up" -> f.manager.hangUp()
+                "server" -> f.api.serverCall.value = call.copy(status = LiveCallStatus.ENDED, endReason = "error")
+                "drop" -> stale.onDropped()
+                "focus" -> staleFocus()
+                "sign-out" -> f.api.link.value = LiveCallLink(computerId = "computer-1", signedIn = false)
+                "stop" -> f.manager.onStop(TestOwner())
+                "switch" -> f.api.link.value = LiveCallLink(computerId = "computer-2", signedIn = true)
+            }
+            runCurrent()
+            val ended = f.manager.state.value
+            assertFalse(ended.holdsMedia, ending)
+            assertTrue(answerJob.isCancelled, ending)
+            assertTrue(answerJob.isCompleted, ending)
+            assertFalse(media.acceptRunning, ending)
+            assertNull(media.accepted, ending)
+            assertEquals(1, media.closeSent, ending)
+            assertEquals(1, media.closes, ending)
+            assertEquals(1, f.audio.ends, ending)
+            assertFalse(f.audio.active, ending)
+            assertEquals(collectors, f.activeJobs, "only app-scoped collectors survive $ending")
+            assertEquals(1, f.api.serverCall.subscriptionCount.value)
+            assertEquals(1, f.api.link.subscriptionCount.value)
+
+            stale.onConnected()
+            stale.onChannelOpen()
+            stale.onDropped()
+            stale.onMessage("""{"type":"session.output_transcript.delta","delta":"Late caption"}""")
+            stale.onMessage("""{"type":"session.input_transcript.delta","delta":"Late speech"}""")
+            stale.onMessage("""{"type":"session.closed","reason":"expired"}""")
+            staleFocus()
+            media.acceptGate?.complete(Unit)
+            runCurrent()
+            advanceTimeBy(LiveCallManager.MEDIA_CONNECT_TIMEOUT_MS + LiveCallManager.END_TIMEOUT_MS)
+            runCurrent()
+            assertEquals(ended, f.manager.state.value, ending)
+            assertEquals(1, media.closes, ending)
+            assertEquals(1, f.audio.ends, ending)
+            assertEquals(collectors, f.activeJobs, ending)
+        }
+    }
+
+    @Test
+    fun `server confirmation and hang-up deadline both cancel a blocked end request`() = runTest {
+        for (confirmation in listOf("server", "deadline")) {
+            val f = Fixture(this)
+            val collectors = f.activeJobs
+            f.live()
+            f.api.endGate = CompletableDeferred()
+            f.manager.hangUp()
+            runCurrent()
+            val endJob = requireNotNull(f.api.endJob)
+            assertTrue(endJob.isActive)
+            assertTrue(f.api.endRunning)
+
+            if (confirmation == "server") {
+                f.api.serverCall.value = call.copy(status = LiveCallStatus.ENDED, endReason = "hung-up")
+            } else {
+                advanceTimeBy(LiveCallManager.END_TIMEOUT_MS)
+            }
+            runCurrent()
+            val settled = f.manager.state.value
+            assertEquals(LiveCallPhase.IDLE, settled.phase)
+            assertTrue(endJob.isCancelled, confirmation)
+            assertTrue(endJob.isCompleted, confirmation)
+            assertFalse(f.api.endRunning, confirmation)
+            assertEquals(collectors, f.activeJobs, confirmation)
+
+            f.api.endGate?.complete(Unit)
+            advanceTimeBy(LiveCallManager.MEDIA_CONNECT_TIMEOUT_MS)
+            runCurrent()
+            assertEquals(settled, f.manager.state.value)
+            assertEquals(listOf("c1"), f.api.ends)
+        }
+    }
+
+    @Test
+    fun `a dropped call's unanswered best-effort end request is bounded and cannot change its notice`() = runTest {
+        val f = Fixture(this)
+        val collectors = f.activeJobs
+        f.live()
+        f.api.endGate = CompletableDeferred()
+        requireNotNull(f.transport.listener).onDropped()
+        runCurrent()
+        val ended = f.manager.state.value
+        val endJob = requireNotNull(f.api.endJob)
+        assertTrue(endJob.isActive)
+        advanceTimeBy(LiveCallManager.END_TIMEOUT_MS)
+        runCurrent()
+
+        assertTrue(endJob.isCancelled)
+        assertTrue(endJob.isCompleted)
+        assertFalse(f.api.endRunning)
+        assertEquals(collectors, f.activeJobs)
+        assertEquals(ended, f.manager.state.value)
+        assertFalse(f.audio.active)
+        assertEquals(1, f.transport.closes)
+    }
+
+    @Test
+    fun `a confirmed end or computer switch cancels a dropped call's pending cleanup immediately`() = runTest {
+        for (confirmation in listOf("ended", "empty", "switch")) {
+            val f = Fixture(this)
+            val collectors = f.activeJobs
+            f.live()
+            f.api.endGate = CompletableDeferred()
+            requireNotNull(f.transport.listener).onDropped()
+            runCurrent()
+            val endJob = requireNotNull(f.api.endJob)
+            assertTrue(endJob.isActive)
+
+            when (confirmation) {
+                "ended" -> f.api.serverCall.value = call.copy(status = LiveCallStatus.ENDED, endReason = "hung-up")
+                "empty" -> f.api.serverCall.value = null
+                "switch" -> f.api.link.value = LiveCallLink(computerId = "computer-2", signedIn = true)
+            }
+            runCurrent()
+            val settled = f.manager.state.value
+            assertTrue(endJob.isCancelled, confirmation)
+            assertTrue(endJob.isCompleted, confirmation)
+            assertFalse(f.api.endRunning, confirmation)
+            assertEquals(collectors, f.activeJobs, confirmation)
+            assertFalse(f.audio.active, confirmation)
+            assertEquals(1, f.transport.closes, confirmation)
+
+            f.api.endGate?.complete(Unit)
+            advanceTimeBy(LiveCallManager.END_TIMEOUT_MS)
+            runCurrent()
+            assertEquals(settled, f.manager.state.value)
+            assertEquals(listOf("c1"), f.api.ends)
+        }
+    }
+
+    @Test
+    fun `media callbacks already queued when the app stops cannot update the ended call`() = runTest {
+        val f = Fixture(this)
+        val collectors = f.activeJobs
+        f.answered()
+        val listener = requireNotNull(f.transport.listener)
+        listener.onChannelOpen()
+        listener.onMessage("""{"type":"session.output_transcript.delta","delta":"Queued caption"}""")
+        listener.onDropped()
+        requireNotNull(f.audio.onFocusLost).invoke()
+        f.manager.onStop(TestOwner())
+        val ended = f.manager.state.value
+        runCurrent()
+
+        assertEquals(ended, f.manager.state.value)
+        assertEquals("", f.manager.state.value.caption)
+        assertEquals(1, f.transport.closes)
+        assertEquals(1, f.audio.ends)
+        assertFalse(f.audio.active)
+        assertEquals(listOf("c1"), f.api.ends)
+        assertEquals(collectors, f.activeJobs)
+    }
+
+    @Test
+    fun `cancelling the manager's owner releases live audio and unsubscribes both collectors`() = runTest {
+        val owner = SupervisorJob(backgroundScope.coroutineContext[Job])
+        val managerScope = CoroutineScope(backgroundScope.coroutineContext + owner)
+        val f = Fixture(this, managerScope = managerScope).live()
+        val stale = requireNotNull(f.transport.listener)
+        val staleFocus = requireNotNull(f.audio.onFocusLost)
+        assertTrue(f.audio.active)
+        assertEquals(1, f.api.serverCall.subscriptionCount.value)
+        assertEquals(1, f.api.link.subscriptionCount.value)
+
+        owner.cancel()
+        runCurrent()
+        val ended = f.manager.state.value
+        assertTrue(owner.isCompleted)
+        assertEquals(0, f.activeJobs)
+        assertEquals(0, f.api.serverCall.subscriptionCount.value)
+        assertEquals(0, f.api.link.subscriptionCount.value)
+        assertFalse(ended.holdsMedia)
+        assertFalse(f.audio.active)
+        assertEquals(1, f.transport.closeSent)
+        assertEquals(1, f.transport.closes)
+        assertEquals(1, f.audio.ends)
+        assertTrue(f.api.ends.isEmpty(), "no request can outlive the cancelled owner")
+
+        stale.onChannelOpen()
+        stale.onMessage("""{"type":"session.output_transcript.delta","delta":"Late"}""")
+        staleFocus()
+        runCurrent()
+        assertEquals(ended, f.manager.state.value)
+    }
+
+    @Test
+    fun `startup errors release partially acquired media and leave no call jobs`() = runTest {
+        for (failure in listOf("factory", "audio", "offer", "start", "answer")) {
+            val f = Fixture(this)
+            val collectors = f.activeJobs
+            when (failure) {
+                "factory" -> f.createFailure = IllegalStateException("factory failed")
+                "audio" -> f.audio.beginFailure = IllegalStateException("routing failed")
+                "offer" -> f.transport.failOffer = IllegalStateException("offer failed")
+                "start" -> f.api.answer = { throw java.io.IOException("start failed") }
+                "answer" -> f.transport.rejectAnswer = true
+            }
+            f.manager.start("b1", "t1", "Ada", grant)
+            runCurrent()
+            assertEquals(LiveCallPhase.ENDED, f.manager.state.value.phase, failure)
+            assertFalse(f.audio.active, failure)
+            assertEquals(if (failure == "factory") 0 else 1, f.transport.closes, failure)
+            assertEquals(1, f.audio.ends, failure)
+            assertEquals(collectors, f.activeJobs, failure)
+        }
+    }
+
+    @Test
+    fun `a late 201 cleans up its session without writing into a later ended attempt`() = runTest {
+        val f = Fixture(this)
+        val gate = CompletableDeferred<Unit>()
+        f.api.gate = gate
+        f.manager.start("b1", "t1", "Ada", grant)
+        runCurrent()
+        f.manager.hangUp()
+        f.manager.start("b2", "t2", "Bo", deny)
+        val ended = f.manager.state.value
+        gate.complete(Unit)
+        runCurrent()
+
+        assertEquals(ended, f.manager.state.value)
+        assertEquals(listOf("c1"), f.api.ends)
+        assertNull(f.transport.accepted)
+
+        f.api.answer = { LiveCallStart.Busy(call.copy(client = "desktop"), "busy") }
+        f.manager.dismiss()
+        f.manager.start("b2", "t2", "Bo", grant)
+        runCurrent()
+        assertEquals("A Live call is already running from your computer. Hang up there first.", f.manager.state.value.notice)
+    }
+
+    @Test
+    fun `a late 201 after hanging up and switching computers changes no state and sends no end to the new computer`() = runTest {
+        val f = Fixture(this)
+        val gate = CompletableDeferred<Unit>()
+        f.api.gate = gate
+        f.manager.start("b1", "t1", "Ada", grant)
+        runCurrent()
+        f.manager.hangUp()
+        f.api.link.value = LiveCallLink(computerId = "computer-2", signedIn = true)
+        runCurrent()
+        val switched = f.manager.state.value
+        gate.complete(Unit)
+        runCurrent()
+
+        assertEquals(switched, f.manager.state.value)
+        assertNull(f.manager.state.value.callId)
+        assertTrue(f.api.ends.isEmpty(), "SessionLiveCallApi releases a late session through its original connection")
+        assertNull(f.transport.accepted)
+        assertFalse(f.audio.active)
+    }
+
     // ------------------------------------------------------------ fixtures
 
     /**
@@ -988,15 +1321,23 @@ class LiveCallManagerTest {
      * the next call gets (so a test can set it up first), and a call after
      * that one gets a fresh transport, which [transport] then names.
      */
-    private class Fixture(scope: TestScope, val preferences: FakePreferences = FakePreferences()) {
+    private class Fixture(
+        scope: TestScope,
+        val preferences: FakePreferences = FakePreferences(),
+        managerScope: CoroutineScope = scope.backgroundScope,
+    ) {
         val api = FakeApi()
         var transport = FakeTransport()
             private set
         val audio = FakeAudio()
+        var createFailure: Exception? = null
+        private val managerJob = requireNotNull(managerScope.coroutineContext[Job])
+        val activeJobs: Int get() = managerJob.children.count { it.isActive }
         val manager = LiveCallManager(
             api = api,
-            scope = scope.backgroundScope,
+            scope = managerScope,
             transports = {
+                createFailure?.let { throw it }
                 if (transport.offers > 0) transport = FakeTransport()
                 transport
             },
@@ -1048,21 +1389,39 @@ class LiveCallManagerTest {
         var closes = 0
         var offerGate: CompletableDeferred<Unit>? = null
         var failOffer: Exception? = null
+        var acceptGate: CompletableDeferred<Unit>? = null
+        var offerJob: Job? = null
+        var acceptJob: Job? = null
+        var offerRunning = false
+        var acceptRunning = false
 
         override suspend fun offer(listener: LiveCallTransport.Listener): String {
             offers += 1
             this.listener = listener
-            offerGate?.await()
-            // The transport's contract: closed while the offer was pending, it throws.
-            if (closes > 0) throw IllegalStateException("transport closed")
-            failOffer?.let { throw it }
-            return OFFER
+            offerJob = currentCoroutineContext()[Job]
+            offerRunning = true
+            try {
+                offerGate?.await()
+                // The transport's contract: closed while the offer was pending, it throws.
+                if (closes > 0) throw IllegalStateException("transport closed")
+                failOffer?.let { throw it }
+                return OFFER
+            } finally {
+                offerRunning = false
+            }
         }
 
         override suspend fun accept(answerSdp: String) {
-            if (closes > 0) throw IllegalStateException("closed")
-            if (rejectAnswer) throw IllegalStateException("setDescription failed: Failed to set remote answer sdp")
-            accepted = answerSdp
+            acceptJob = currentCoroutineContext()[Job]
+            acceptRunning = true
+            try {
+                acceptGate?.await()
+                if (closes > 0) throw IllegalStateException("closed")
+                if (rejectAnswer) throw IllegalStateException("setDescription failed: Failed to set remote answer sdp")
+                accepted = answerSdp
+            } finally {
+                acceptRunning = false
+            }
         }
 
         override fun setMuted(muted: Boolean) {
@@ -1088,6 +1447,8 @@ class LiveCallManagerTest {
         var gate: CompletableDeferred<Unit>? = null
         /** Holds the computer's answer to a hang-up until the test lets it go. */
         var endGate: CompletableDeferred<Unit>? = null
+        var endJob: Job? = null
+        var endRunning = false
         var answer: () -> LiveCallStart = {
             LiveCallStart.Started(
                 LiveCallState("c1", "b1", "t1", "android", "marin", 5_000.0, LiveCallStatus.CONNECTING),
@@ -1105,7 +1466,13 @@ class LiveCallManagerTest {
 
         override suspend fun end(callId: String) {
             ends += callId
-            endGate?.await()
+            endJob = currentCoroutineContext()[Job]
+            endRunning = true
+            try {
+                endGate?.await()
+            } finally {
+                endRunning = false
+            }
         }
 
         companion object {
@@ -1120,10 +1487,14 @@ class LiveCallManagerTest {
         var onFocusLost: (() -> Unit)? = null
         /** Another call holds the audio: focus is refused as the call begins. */
         var refuseFocus = false
+        var active = false
+        var beginFailure: Exception? = null
 
         override fun begin(speaker: Boolean, onFocusLost: () -> Unit) {
             begins += speaker
             this.onFocusLost = onFocusLost
+            active = !refuseFocus
+            beginFailure?.let { throw it }
             if (refuseFocus) onFocusLost()
         }
 
@@ -1133,6 +1504,8 @@ class LiveCallManagerTest {
 
         override fun end() {
             ends += 1
+            active = false
+            onFocusLost = null
         }
     }
 

@@ -22,7 +22,6 @@ import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
 import androidx.compose.material.icons.automirrored.filled.List
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.KeyboardArrowDown
-import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.Icon
@@ -103,7 +102,7 @@ internal object CompactRosterMetrics {
     val trailing: Dp = 16.dp
 
     /** The face at the default text size. It grows with the text, up to [maxFace]. */
-    val face: Dp = 26.dp
+    val face: Dp = 32.dp
 
     /** Where the largest text sizes stop growing the face and spend the width on names. */
     val maxFace: Dp = 40.dp
@@ -137,7 +136,7 @@ private fun stackedRows(): Boolean =
  */
 @Composable
 private fun wrapsBetweenWords(): TextStyle =
-    LocalTextStyle.current.copy(lineBreak = LineBreak.Heading, hyphens = Hyphens.None)
+    MaterialTheme.typography.bodyLarge.copy(lineBreak = LineBreak.Heading, hyphens = Hyphens.None)
 
 /**
  * The text to draw when it may wrap, with a zero-width break after each hyphen.
@@ -281,16 +280,22 @@ private fun CompactBotLine(
                     .padding(vertical = 4.dp),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
-                UnreadDot(visible = row.showsUnreadDot, color = bot.color)
-                BotAvatar(bot = bot, size = faceSize, state = face, animated = false)
+                UnreadDot(visible = row.showsUnreadDot)
+                RosterFace(
+                    size = faceSize,
+                    color = bot.color,
+                    working = row.showsSpinner,
+                    badge = if (row.showsWaiting) RosterFaceBadge.WAITING else null,
+                    modifier = Modifier.testTag("roster-face.${bot.id}"),
+                ) {
+                    BotAvatar(bot = bot, size = faceSize, state = face, animated = false)
+                }
                 Spacer(modifier = Modifier.width(CompactRosterMetrics.faceSpacing))
                 val status: @Composable () -> Unit = {
                     RowStatus(
-                        waiting = row.showsWaiting,
-                        working = row.showsSpinner || creatingHere,
+                        working = creatingHere,
                         stamp = stamp,
-                        color = bot.color,
-                        workingLabel = if (row.showsSpinner) WORKING else CREATING_THREAD,
+                        workingLabel = CREATING_THREAD,
                     )
                 }
                 if (stacked) {
@@ -359,11 +364,10 @@ private fun BotName(bot: Bot, row: RosterBotRow, maxLines: Int) {
     ) {
         Text(
             text = if (maxLines > 1) bot.name.breakableAtHyphens() else bot.name,
-            fontSize = 17.sp,
             fontWeight = FontWeight.SemiBold,
             maxLines = maxLines,
             overflow = TextOverflow.Ellipsis,
-            style = if (maxLines > 1) wrapsBetweenWords() else LocalTextStyle.current,
+            style = if (maxLines > 1) wrapsBetweenWords() else MaterialTheme.typography.bodyLarge,
             modifier = Modifier
                 .weight(1f, fill = false)
                 .testTag("bot-name.${bot.id}"),
@@ -377,7 +381,7 @@ private fun BotName(bot: Bot, row: RosterBotRow, maxLines: Int) {
 private fun Separator() {
     Text(
         text = "·",
-        fontSize = 15.sp,
+        style = MaterialTheme.typography.bodyMedium,
         color = secondaryTint,
         modifier = Modifier.clearAndSetSemantics {},
     )
@@ -388,7 +392,7 @@ private fun Separator() {
 private fun RoleText(title: String, modifier: Modifier = Modifier) {
     Text(
         text = title,
-        fontSize = 15.sp,
+        style = MaterialTheme.typography.bodyMedium,
         color = secondaryTint,
         maxLines = 1,
         overflow = TextOverflow.Ellipsis,
@@ -467,7 +471,7 @@ private fun ThreadControl(bot: Bot, count: Int, listed: Boolean, enabled: Boolea
         )
         Text(
             text = count.toString(),
-            fontSize = 15.sp,
+            style = MaterialTheme.typography.bodyMedium.copy(fontFeatureSettings = "tnum"),
             fontWeight = FontWeight.Medium,
             color = secondaryTint,
         )
@@ -752,17 +756,23 @@ internal fun CompactRoomRow(
             .padding(vertical = 4.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        UnreadDot(visible = room.unread && !busy, color = ROOM_COLOR)
-        RoomFaces(members = members, size = faceSize)
+        UnreadDot(visible = room.unread && !busy)
+        RosterFace(
+            size = faceSize,
+            color = ROOM_COLOR,
+            working = busy && !waiting,
+            badge = if (waiting) RosterFaceBadge.WAITING else null,
+        ) {
+            RoomFaces(members = members, size = faceSize)
+        }
         Spacer(modifier = Modifier.width(CompactRosterMetrics.faceSpacing))
         val name: @Composable (Modifier, Int) -> Unit = { nameModifier, lines ->
             Text(
                 text = if (lines > 1) room.name.breakableAtHyphens() else room.name,
-                fontSize = 17.sp,
                 fontWeight = FontWeight.SemiBold,
                 maxLines = lines,
                 overflow = TextOverflow.Ellipsis,
-                style = if (lines > 1) wrapsBetweenWords() else LocalTextStyle.current,
+                style = if (lines > 1) wrapsBetweenWords() else MaterialTheme.typography.bodyLarge,
                 modifier = nameModifier,
             )
         }
@@ -770,12 +780,12 @@ internal fun CompactRoomRow(
             // as on a bot's row: the whole width for the name
             Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
                 name(Modifier, 3)
-                RowStatus(waiting = waiting, working = busy, stamp = stamp, color = ROOM_COLOR)
+                RowStatus(working = false, stamp = stamp)
             }
         } else {
             name(Modifier.weight(1f), 1)
             Spacer(modifier = Modifier.width(8.dp))
-            RowStatus(waiting = waiting, working = busy, stamp = stamp, color = ROOM_COLOR)
+            RowStatus(working = false, stamp = stamp)
         }
     }
 }
@@ -813,51 +823,36 @@ private fun RoomFaces(members: List<Bot>, size: Dp) {
     }
 }
 
-/** The unread dot, in its own gutter at the row's leading edge, in the chat's colour. */
+/** The unread mark is the same messenger blue in every contact's leading gutter. */
 @Composable
-private fun UnreadDot(visible: Boolean, color: String) {
+private fun UnreadDot(visible: Boolean) {
     Box(modifier = Modifier.width(CompactRosterMetrics.dotGutter), contentAlignment = Alignment.Center) {
         if (visible) {
             Box(
                 modifier = Modifier
                     .size(8.dp)
-                    .background(Color(MausPalette.argb(color)), CircleShape)
+                    .background(rosterUnreadBlue, CircleShape)
                     .semantics { contentDescription = UNREAD },
             )
         }
     }
 }
 
-/**
- * The trailing marks: a hand in the chat's colour while it waits on the
- * person, and a spinner in place of the time while it works.
- */
+/** Work lives on the face; only creation progress temporarily replaces the time. */
 @Composable
 private fun RowStatus(
-    waiting: Boolean,
     working: Boolean,
     stamp: String,
-    color: String,
-    /** What the spinner says to TalkBack: work, or a thread being made. */
     workingLabel: String = WORKING,
 ) {
-    val size = glyph(15.sp)
     Row(
         horizontalArrangement = Arrangement.spacedBy(6.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        if (waiting) {
-            Icon(
-                painter = painterResource(R.drawable.ic_pan_tool),
-                contentDescription = WAITING_ON_YOU,
-                tint = Color(MausPalette.argb(color)),
-                modifier = Modifier.size(size),
-            )
-        }
         if (working) {
-            Spinner(size, workingLabel)
+            Spinner(glyph(15.sp), workingLabel)
         } else if (stamp.isNotEmpty()) {
-            Text(text = stamp, fontSize = 15.sp, color = secondaryTint, maxLines = 1)
+            Text(text = stamp, style = MaterialTheme.typography.bodyMedium.copy(fontFeatureSettings = "tnum"), color = secondaryTint, maxLines = 1)
         }
     }
 }
@@ -868,9 +863,7 @@ private fun RowStatus(
  */
 @Composable
 private fun Spinner(size: Dp, label: String = WORKING) {
-    Box(modifier = Modifier.clearAndSetSemantics { contentDescription = label }) {
-        CircularProgressIndicator(modifier = Modifier.size(size), strokeWidth = 2.dp)
-    }
+    RosterWorkingIndicator(size, MaterialTheme.colorScheme.primary, label)
 }
 
 /** The Chief of Staff mark after a bot's name: the desktop's crown, in the app's accent. */

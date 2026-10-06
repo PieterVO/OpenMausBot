@@ -59,6 +59,7 @@ fun AssistantTurnChip(
     openLink: (String, Message) -> Unit,
     openAttachment: (DisplayedMessageAttachment, Message, DownloadedFile?) -> Unit,
     openThread: (ThreadRef) -> Unit,
+    digest: Message? = null,
 ) {
     val haptics = rememberHaptics()
     Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
@@ -72,8 +73,7 @@ fun AssistantTurnChip(
             contentAlignment = Alignment.CenterStart,
         ) {
             Row(
-                modifier = Modifier.background(secondaryTint.copy(alpha = 0.10f), RoundedCornerShape(18.dp))
-                    .padding(horizontal = 10.dp, vertical = 6.dp),
+                modifier = Modifier.padding(horizontal = 4.dp, vertical = 6.dp),
                 horizontalArrangement = Arrangement.spacedBy(6.dp),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
@@ -82,7 +82,7 @@ fun AssistantTurnChip(
                 Text(if (expanded) "Hide" else "Show", fontSize = 12.sp, color = secondaryTint)
             }
         }
-        if (expanded) turn.items.forEach { message ->
+        if (expanded) turn.items.forEachIndexed { index, message ->
             key(message.id) {
                 val requester = remember { BringIntoViewRequester() }
                 LaunchedEffect(revealMessageId) {
@@ -94,10 +94,13 @@ fun AssistantTurnChip(
                     }
                 }
                 Box(Modifier.bringIntoViewRequester(requester)) {
-                    MessageRow(chat, message, openLink = openLink, openAttachment = openAttachment, openThread = openThread)
+                    MessageRow(chat, message, endsRun = TranscriptLayout.endsRun(turn.items, index),
+                        showSender = index == 0 || TranscriptLayout.endsRun(turn.items, index - 1),
+                        openLink = openLink, openAttachment = openAttachment, openThread = openThread)
                 }
             }
         }
+        if (expanded && digest != null) TurnDigestChip(digest, chat.name, chat.color, showTitle = true)
     }
 }
 

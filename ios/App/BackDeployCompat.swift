@@ -237,6 +237,22 @@ private struct OnUserScroll: ViewModifier {
     }
 }
 
+/// Runs `action` when a scroll the person started comes to rest.
+/// iOS 18 only, like `OnUserScroll`; below that it never fires.
+private struct OnUserScrollSettled: ViewModifier {
+    let action: () -> Void
+
+    func body(content: Content) -> some View {
+        if #available(iOS 18.0, *) {
+            content.onScrollPhaseChange { old, new in
+                if new == .idle, old != .idle { action() }
+            }
+        } else {
+            content
+        }
+    }
+}
+
 /// `scrollClipDisabled()` is iOS 17. Below it the scroll view clips its
 /// content to its bounds, which costs a shadow spilling past the edge.
 private struct ScrollClipDisabled: ViewModifier {
@@ -311,6 +327,10 @@ extension View {
 
     func onUserScrollCompat(_ action: @escaping () -> Void) -> some View {
         modifier(OnUserScroll(action: action))
+    }
+
+    func onUserScrollSettledCompat(_ action: @escaping () -> Void) -> some View {
+        modifier(OnUserScrollSettled(action: action))
     }
 
     func scrollClipDisabledCompat() -> some View {

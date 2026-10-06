@@ -6,11 +6,9 @@
 //   [digest] · tools: shell ×3, memory_update ×2 (1 failed) · files: changed
 //   a.ts; added b.ts · memory: updated MEMORY.md · reply: Done.
 //
-// As a bubble that is a log line under every reply; dropped entirely, the
-// one place the phone says what a turn touched is gone. So it becomes a
-// small chip, and this is what the chip opens. The wire carries only the
-// text, so the parse is by the renderer's own separators, and anything it
-// does not recognise is kept as a plain line rather than lost.
+// Older computers send only this paragraph. Keep its parser as the fallback
+// for structured receipts, retaining unknown parts instead of dropping work
+// evidence the phone does not recognise yet.
 import Foundation
 
 public struct DigestSummary: Hashable, Identifiable, Sendable {
@@ -27,6 +25,14 @@ public struct DigestSummary: Hashable, Identifiable, Sendable {
     public let lines: [Line]
     /// Calls counted from the tools part's "×N" marks; 0 when it has none.
     public let toolCalls: Int
+
+    public var failedCalls: Int {
+        digestSum(lines.lazy.filter { $0.label == "Tools" }.flatMap(\.items).map { item in
+            guard let match = Self.failureCount.firstMatch(in: item, range: NSRange(item.startIndex..., in: item)),
+                  let range = Range(match.range(at: 1), in: item) else { return 0 }
+            return Int(item[range]) ?? Int.max
+        })
+    }
 
     public var isEmpty: Bool { lines.isEmpty }
 
@@ -68,7 +74,7 @@ public struct DigestSummary: Hashable, Identifiable, Sendable {
             // that opens onto "no tool calls" is the noise this replaces.
             if Self.nothingDone.contains(part) { continue }
             if let value = Self.value(of: part, label: "tools:") {
-                calls += Self.callCount(value)
+                calls = digestSum([calls, Self.callCount(value)])
                 lines.append(Line(label: "Tools", value: value, items: Self.tools(value)))
             } else if let value = Self.value(of: part, label: "files:") {
                 if value == "none changed" { continue }
@@ -112,12 +118,14 @@ public struct DigestSummary: Hashable, Identifiable, Sendable {
         return split(entries, by: "\u{1F}")
     }
 
+    private static let failureCount = try! NSRegularExpression(pattern: #"\((\d+) failed\)$"#)
+    private static let toolCount = try! NSRegularExpression(pattern: #"×(\d+)"#)
+
     private static func callCount(_ value: String) -> Int {
-        guard let regex = try? NSRegularExpression(pattern: #"×(\d+)"#) else { return 0 }
         let range = NSRange(value.startIndex..., in: value)
-        return regex.matches(in: value, range: range).reduce(0) { sum, match in
-            guard let r = Range(match.range(at: 1), in: value) else { return sum }
-            return sum + (Int(value[r]) ?? 0)
-        }
+        return digestSum(toolCount.matches(in: value, range: range).lazy.map { match in
+            guard let r = Range(match.range(at: 1), in: value) else { return 0 }
+            return Int(value[r]) ?? Int.max
+        })
     }
 }

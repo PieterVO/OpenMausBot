@@ -10,25 +10,28 @@ struct AssistantTurnChip: View {
     var openThread: ((ThreadRef) -> Void)? = nil
     var revealedMessageId: String? = nil
     var scrollToMessage: ((String) -> Void)? = nil
+    var digest: Message? = nil
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @Environment(\.botTintColor) private var color
+    @State private var showingDigest = false
     @State private var expanded = false
 
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
             Button {
-                withAnimation { expanded.toggle() }
+                withAnimation(reduceMotion ? .easeOut(duration: 0.2) : .spring(response: 0.38, dampingFraction: 0.82)) { expanded.toggle() }
                 Haptics.selection()
             } label: {
                 HStack(spacing: 6) {
-                    Image(systemName: "checkmark")
+                    Image(systemName: "checkmark").foregroundStyle(BotTint.ink(color))
                     Text(turn.label)
                     Image(systemName: "chevron.right")
                         .rotationEffect(.degrees(expanded ? 90 : 0))
                 }
                 .font(.caption.weight(.medium))
                 .foregroundStyle(.secondary)
-                .padding(.horizontal, 9)
-                .padding(.vertical, 6)
-                .background(Color.secondary.opacity(0.08), in: Capsule())
+                .frame(minHeight: 44)
+                .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
             .accessibilityLabel(turn.label)
@@ -39,17 +42,37 @@ struct AssistantTurnChip: View {
                 ForEach(Array(turn.messages.enumerated()), id: \.element.id) { index, message in
                     MessageRow(
                         chat: chat, message: message, endsRun: index == turn.messages.count - 1,
-                        openLink: openLink, openThread: openThread
+                        startsRun: index == 0, openLink: openLink, openThread: openThread
                     )
+                    .equatable()
                     .id(message.id)
                     .onAppear {
                         if revealedMessageId == message.id { scrollToMessage?(message.id) }
                     }
                 }
+                if let digest, !DigestPresentation(message: digest).isEmpty {
+                    Button {
+                        Haptics.selection()
+                        showingDigest = true
+                    } label: {
+                        Label("What I did", systemImage: "checklist")
+                            .font(.footnote)
+                            .foregroundStyle(BotTint.ink(digest.from?.color ?? color))
+                            .frame(minHeight: 44)
+                            .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityIdentifier("assistant-turn-digest.\(turn.turnId)")
+                }
             }
         }
         .onValueChange(of: revealedMessageId, initial: true) { id in
             if turn.messages.contains(where: { $0.id == id }) { expanded = true }
+        }
+        .sheet(isPresented: $showingDigest) {
+            if let digest {
+                DigestSheet(message: digest, botName: digest.from?.name ?? chat.name, color: digest.from?.color ?? color)
+            }
         }
     }
 }

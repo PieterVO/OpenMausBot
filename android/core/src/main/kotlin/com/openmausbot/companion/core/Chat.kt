@@ -119,6 +119,76 @@ fun CompanionState.chatSummary(
 }
 
 /**
+ * Screen-owned thread derivations. Store snapshots replace message lists rather
+ * than mutating them; stream/runtime frames therefore reuse unchanged branches.
+ * A leaf move or pending edit invalidates a branch even with the same raw list.
+ */
+class ThreadProjectionCache {
+    private data class Entry(
+        val source: List<Message>?,
+        val leafId: String?,
+        val pendingEdit: PendingEdit?,
+        val projection: ThreadProjection,
+    )
+
+    private val entries = mutableMapOf<String, Entry>()
+    private var leafBots: List<Bot>? = null
+    private val inheritedLeaves = mutableMapOf<String, String?>()
+
+    private fun inheritedLeaf(state: CompanionState, threadId: String): String? {
+        if (leafBots !== state.bots) {
+            inheritedLeaves.clear()
+            for (bot in state.bots) {
+                if (bot.threadId !in inheritedLeaves) inheritedLeaves[bot.threadId] = bot.activeLeafId
+            }
+            leafBots = state.bots
+        }
+        // forTask clears the owning bot's leaf for every nonselected sibling.
+        return inheritedLeaves[threadId]
+    }
+
+    fun thread(state: CompanionState, threadId: String): ThreadProjection {
+        val source = state.messages[threadId]
+        val leafId = if (state.activeLeafIds.containsKey(threadId)) state.activeLeafIds[threadId]
+            else inheritedLeaf(state, threadId)
+        val pendingEdit = state.pendingEdits[threadId]
+        val previous = entries[threadId]
+        if (previous != null && previous.source === source && previous.leafId == leafId &&
+            previous.pendingEdit === pendingEdit
+        ) return previous.projection
+        val projection = ThreadProjection(state.visibleTranscript(threadId))
+        entries[threadId] = Entry(source, leafId, pendingEdit, projection)
+        return projection
+    }
+
+    /** Same thread inclusion and newest-first order as CompanionState.pendingApprovals. */
+    fun pendingApprovals(state: CompanionState): List<PendingApproval> {
+        val threadIds = linkedSetOf<String>()
+        for (bot in state.bots) {
+            threadIds.add(bot.threadId)
+            for (task in bot.tasks.orEmpty()) threadIds.add(task.threadId)
+        }
+        for (room in state.rooms) threadIds.add(room.threadId)
+        entries.keys.retainAll(threadIds)
+        return buildList {
+            for (threadId in threadIds) {
+                for (message in thread(state, threadId).pendingApprovals) add(PendingApproval(threadId, message))
+            }
+        }.sortedByDescending { it.message.at }
+    }
+}
+
+/** No Compose stability promise: the private preview cache is deliberately mutable. */
+class ThreadProjection internal constructor(val messages: List<Message>) {
+    val last: Message? = messages.lastOrNull()
+    val pendingApprovals: List<Message> = messages.filter { it.card?.isPending == true }
+    private val previews = arrayOfNulls<String>(ActivityDetail.entries.size)
+
+    fun preview(detail: ActivityDetail): String = previews[detail.ordinal]
+        ?: rosterPreview(messages, detail).also { previews[detail.ordinal] = it }
+}
+
+/**
  * Everything worth showing in the chat list: pinned first, then unread, then most
  * recently active. Hidden bots stay hidden. Rooms never pin.
  *
@@ -128,15 +198,17 @@ fun CompanionState.chatSummary(
  */
 fun CompanionState.chatSummaries(
     activity: ActivityDetail = ActivityDetail.FULL,
+    projections: ThreadProjectionCache? = null,
 ): List<ChatSummary> {
     val chats = bots.filter { it.hidden != true }.map { Chat.BotChat(it) } +
         rooms.map { Chat.RoomChat(it) }
     return chats
         .map { chat ->
-            val messages = visibleTranscript(chat.threadId)
+            val projection = projections?.thread(this, chat.threadId)
+            val messages = projection?.messages ?: visibleTranscript(chat.threadId)
             ChatSummary(
                 chat = chat,
-                preview = rosterPreview(messages, activity),
+                preview = projection?.preview(activity) ?: rosterPreview(messages, activity),
                 lastActivity = messages.lastOrNull()?.at ?: 0.0,
                 pinned = pinned(chat),
             )

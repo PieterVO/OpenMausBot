@@ -55,13 +55,18 @@ protocol changes are needed for the Android UI.
 ## Compact home list
 
 The home list has two densities, chosen per device in **Settings → Threads
-list → List density**. Compact is the default: one line per bot and group, a
-crown after a Chief of Staff, a hand while a bot waits on you and a spinner in
-place of the time while it works. Only a bot with two or more threads shows
-**› N**, which lists them under the bot's name and ends with **New thread**;
-a long press on any bot offers **New thread** and **Manage threads**.
-Comfortable is the earlier layout and keeps its own logic. The compact rules
-mirror the iPhone companion's compact list and are tested in `:core`:
+list → List density**. Compact is the default: one line per bot and group,
+32 dp contact faces, a crown after a Chief of Staff, and messenger-blue unread
+dots. Waiting is a hand badge on the face's bottom-trailing corner; work is a
+slowly rotating arc in that bot's colour (a complete static ring when Android's
+animator scale is zero). Only a bot with two or more threads shows **› N**,
+which lists them under the bot's name and ends with **New thread**; a long
+press on any bot offers **New thread** and **Manage threads**, also available
+as TalkBack actions. Comfortable uses 44 dp faces, the last reply preview and
+relative time, and keeps its Threads tree. Both densities keep the existing
+sorting, search, create, Updates, routine calendar, Settings, and refresh paths.
+The compact rules mirror the iPhone companion's compact list and are tested
+in `:core`:
 
 ```sh
 ./gradlew :core:test --tests '*RosterDensityTest' \
@@ -76,7 +81,7 @@ server, with native graphics so text is measured for real. It checks:
 - compact is the default, one line per bot, with the crown and no Threads row
   for a single-thread bot, and the Chief of Staff row set apart from Needs
   attention;
-- the hand and the spinner on bot and group rows;
+- contact faces, corner hand badges, and work rings on bot and group rows;
 - a single-thread bot's long press and TalkBack action create a thread, with
   a spinner on the row until it opens;
 - **› 3** lists Pepper's threads in line with its name, without the routine
@@ -90,13 +95,32 @@ server, with native graphics so text is measured for real. It checks:
   between whole words with automatic hyphenation off, including a two-word
   name on a narrow phone;
 - the setting switches back to comfortable and is saved; comfortable keeps its
-  Threads tree;
+  Threads tree and adds reply previews and relative timestamps;
 - in both densities at twice the text size, the first title starts under the
-  header and the last row scrolls fully clear of the floating bottom bar.
+  header and the last row scrolls fully clear of the floating bottom bar;
+- sentence-case section headers preserve localized copy; Needs attention rows
+  lead with 32/40 dp faces and status badges, rather than a glyph-only column;
+- the Updates pill keeps stacked contact faces, an orange Needs-you count and
+  a work-count spinner; its sheet uses radius-20 cards and the same face/badge
+  language. Inline approval options wrap and keep 48 dp targets at font scale
+  1.3; skin changes update the sheet and roster without reopening them;
+- all eight appearance skins keep home controls reachable with RTL layout at
+  font scale 1.3.
 
 Two things these checks cannot settle: this host has no hyphenation patterns,
 so only a device shows that no hyphen is added to a wrapped name, and TalkBack
 speech needs a real screen reader.
+
+The screenshot cases in `RosterScreenTest` use native Robolectric graphics and
+the real `RosterScreen` over `RosterFixture`. They write compact and comfortable
+light/dark renders (overview and bot rows), the actual Updates dialog window
+in light/dark (overview and unread-review rows), and RTL font-scale-1.3
+variants to `android/app/build/outputs/roster-screenshots/`. Copy the PNGs to
+`.impeccable/review/android-home/` for a visual review. The Updates test
+expands the preserved native partial detent using its accessibility action;
+captures include the existing synthetic **Allow / Deny** approval, working
+contacts, and unread replies. These are offline JVM renders, not emulator/device
+captures; they do not establish TalkBack speech or hardware animation smoothness.
 
 ## Installable preview
 

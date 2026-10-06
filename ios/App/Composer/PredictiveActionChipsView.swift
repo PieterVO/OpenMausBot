@@ -1,9 +1,7 @@
 import SwiftUI
 
 public struct ActionChipItem: Identifiable {
-    /// A stable id, not a fresh UUID per instance: the row is rebuilt from
-    /// stored chips on every render, and identity that changes each time
-    /// makes SwiftUI re-insert every chip instead of leaving them be.
+    /// Stable ids keep stored chips in place when the composer renders again.
     public let id: String
     public let title: String
     public let icon: String
@@ -19,60 +17,57 @@ public struct ActionChipItem: Identifiable {
 
 public struct PredictiveActionChipsView: View {
     public let chips: [ActionChipItem]
-    public let accentColor: Color
+    public let accentColor: Color?
+    public let color: String?
     public let onSelectChip: (ActionChipItem) -> Void
-    
-    @Environment(\.colorScheme) private var colorScheme
-    
+
+    @Environment(\.botTintColor) private var botTintColor
+
     public static let defaultChips: [ActionChipItem] = [
         ActionChipItem(title: "Show diff", icon: "arrow.triangle.pull", prompt: "Show latest git diff"),
         ActionChipItem(title: "Run tests", icon: "checkmark.seal", prompt: "Run all automated tests"),
         ActionChipItem(title: "Explain steps", icon: "text.bubble", prompt: "Explain the changes in detail"),
         ActionChipItem(title: "What's next?", icon: "sparkles", prompt: "What should we do next?")
     ]
-    
+
     public init(
         chips: [ActionChipItem] = PredictiveActionChipsView.defaultChips,
-        accentColor: Color = .purple,
+        accentColor: Color? = nil,
+        color: String? = nil,
         onSelectChip: @escaping (ActionChipItem) -> Void
     ) {
         self.chips = chips
         self.accentColor = accentColor
+        self.color = color
         self.onSelectChip = onSelectChip
     }
-    
+
     public var body: some View {
-        let isDark = colorScheme == .dark
-        
         ScrollView(.horizontal, showsIndicators: false) {
-            HStack(spacing: 6) {
+            HStack(spacing: 8) {
                 ForEach(chips) { chip in
                     Button {
                         onSelectChip(chip)
                         Haptics.selection()
                     } label: {
-                        HStack(spacing: 4) {
+                        HStack(spacing: 6) {
                             Image(systemName: chip.icon)
-                                .font(.system(size: 10, weight: .bold))
-                                .foregroundColor(accentColor)
-                            
+                                .foregroundStyle(accentColor ?? BotTint.ink(color ?? botTintColor))
+                                .accessibilityHidden(true)
                             Text(chip.title)
-                                .font(.caption2.weight(.semibold))
-                                .foregroundColor(isDark ? Color(hex: "#E2E8F0") : Color(hex: "#334155"))
+                                .foregroundStyle(.primary)
                         }
-                        .padding(.horizontal, 9)
-                        .padding(.vertical, 4.5)
-                        .background(isDark ? Color.white.opacity(0.08) : Color.black.opacity(0.05))
-                        .clipShape(Capsule())
-                        .overlay(
-                            Capsule()
-                                .stroke(isDark ? Color.white.opacity(0.08) : Color.black.opacity(0.06), lineWidth: 0.5)
-                        )
+                        .font(.subheadline.weight(.medium))
+                        .padding(.horizontal, 14)
+                        .padding(.vertical, 9)
+                        .frame(minHeight: 44)
+                        .background(BotTint.theirs(color ?? botTintColor), in: Capsule())
+                        .contentShape(Capsule())
                     }
                     .buttonStyle(.plain)
                 }
             }
-            .padding(.horizontal, 14)
+            .padding(.horizontal, 12)
             .padding(.vertical, 3)
         }
     }

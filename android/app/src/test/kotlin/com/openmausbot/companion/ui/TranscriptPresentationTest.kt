@@ -158,10 +158,10 @@ class TranscriptPresentationTest {
             compaction = Compaction(summary, 12345))
         val raw = "[digest] · tools: shell ×3 · files: changed a.ts · reply: A dependency is missing."
         val digest = Message("digest", Message.Role.BOT, Message.Kind.DIGEST, 7000.0, text = raw)
-        mount(ActivityDetail.FULL, transcript = messages + compact + digest)
+        mount(ActivityDetail.FULL, transcript = messages + compact + digest, summaries = true)
         // Never the raw log line; the chip, and its sections on tap.
         compose.onNodeWithText(raw).assertDoesNotExist()
-        compose.onNodeWithText("What I did · 3 tools").performClick()
+        compose.onNodeWithText("3 tools · 1 file").performClick()
         compose.onNodeWithText("changed a.ts").assertIsDisplayed()
         compose.onNodeWithText("shell ×3").assertIsDisplayed()
         compose.onNodeWithText("Done").performClick()
@@ -173,8 +173,10 @@ class TranscriptPresentationTest {
         compose.runOnIdle { scene.environment.chatPreferences.setActivityDetail(ActivityDetail.HIDDEN) }
         compose.onNodeWithText(compact.compaction!!.chipText).assertDoesNotExist()
         compose.onNodeWithText(summary).assertDoesNotExist()
-        // Hidden activity hides the digest with the calls it summarises.
-        compose.onNodeWithText("What I did · 3 tools").assertDoesNotExist()
+        // Summary visibility is independent of activity, including at Hidden.
+        compose.onNodeWithText("3 tools · 1 file").assertIsDisplayed()
+        compose.runOnIdle { scene.environment.chatPreferences.setShowWorkSummaries(false) }
+        compose.onNodeWithText("3 tools · 1 file").assertDoesNotExist()
     }
 
     @Test
@@ -209,27 +211,27 @@ class TranscriptPresentationTest {
             text = "[digest] · no tool activity observed in this turn · files: none changed · reply: A dependency is missing.")
         val work = quiet.copy(id = "work", at = 7000.0,
             text = "[digest] · tools: shell ×1 · files: changed a.ts · reply: Fixed.")
-        mount(ActivityDetail.FULL, transcript = messages + quiet + work)
+        mount(ActivityDetail.FULL, transcript = messages + quiet + work, summaries = true)
         compose.onNodeWithText("A dependency is missing.").assertIsDisplayed()
         compose.onNodeWithText("What I did", substring = false).assertDoesNotExist()
-        compose.onNodeWithText("What I did · 1 tool").performClick()
+        compose.onNodeWithText("1 tool · 1 file").performClick()
         compose.onNodeWithText("changed a.ts").assertIsDisplayed()
         compose.onNodeWithText("Done").performClick()
         compose.runOnIdle { scene.environment.chatPreferences.setActivityDetail(ActivityDetail.REDUCED) }
         compose.onNodeWithText("What I did", substring = false).assertDoesNotExist()
-        compose.onNodeWithText("What I did · 1 tool").assertIsDisplayed()
+        compose.onNodeWithText("1 tool · 1 file").assertIsDisplayed()
         screenshot("digest-only-recorded-work")
     }
 
     @Test
     fun changingActivityToHiddenSuppressesLiveReasoningButKeepsWorkingIndicator() {
         mount(ActivityDetail.FULL, reasoning = true)
-        compose.onNodeWithText("Thinking…").assertIsDisplayed()
+        compose.onNodeWithText("Thinking").assertIsDisplayed()
         compose.runOnIdle { scene.environment.chatPreferences.setActivityDetail(ActivityDetail.HIDDEN) }
-        compose.onNodeWithText("Thinking…").assertDoesNotExist()
+        compose.onNodeWithText("Thinking").assertDoesNotExist()
         compose.onNodeWithContentDescription("Scout is typing").assertIsDisplayed()
         compose.runOnIdle { scene.environment.chatPreferences.setActivityDetail(ActivityDetail.REDUCED) }
-        compose.onNodeWithText("Thinking…").assertIsDisplayed()
+        compose.onNodeWithText("Thinking").assertIsDisplayed()
     }
 
     @Test
@@ -262,7 +264,7 @@ class TranscriptPresentationTest {
         compose.onNodeWithText(targetText).assertIsDisplayed()
     }
 
-    private fun mount(detail: ActivityDetail, reasoning: Boolean = false, transcript: List<Message> = messages) {
+    private fun mount(detail: ActivityDetail, reasoning: Boolean = false, transcript: List<Message> = messages, summaries: Boolean = false) {
         val fixture = bot(name = "Scout", busy = reasoning).copy(messages = if (reasoning) emptyList() else transcript)
         scene = WiringScene(
             connection = Connection(id = "transcript-fixture", name = "Offline fixture", host = "127.0.0.1", port = server.port),
@@ -275,6 +277,7 @@ class TranscriptPresentationTest {
             }
         }
         scene.environment.chatPreferences.setActivityDetail(detail)
+        scene.environment.chatPreferences.setShowWorkSummaries(summaries)
         compose.setContent {
             CompositionLocalProvider(LocalCompanion provides scene.environment) {
                 CompanionTheme(darkTheme = false) {

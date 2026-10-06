@@ -6,12 +6,13 @@ public struct SkillExecutionReceiptView: View {
     public let durationMs: Int
     public let parameters: String
     public let output: String
-    /// Output that is someone's words — a teammate's report — rather than a
-    /// tool's log: shown in full, in the body font, and selectable.
+    /// A teammate's report is prose, not a tool log: keep every word selectable.
     public let outputIsProse: Bool
-    
-    @State private var isExpanded: Bool = false
-    
+
+    @Environment(\.botTintColor) private var color
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @State private var isExpanded = false
+
     public init(
         skillName: String,
         status: String = "success",
@@ -27,122 +28,86 @@ public struct SkillExecutionReceiptView: View {
         self.output = output
         self.outputIsProse = outputIsProse
     }
-    
+
     public var body: some View {
         let hasDetails = !parameters.isEmpty || !output.isEmpty
-
-        VStack(alignment: .leading, spacing: 6) {
+        VStack(alignment: .leading, spacing: 8) {
             Button {
                 guard hasDetails else { return }
-                withAnimation(.spring(response: 0.3, dampingFraction: 0.75)) {
+                Haptics.selection()
+                withAnimation(reduceMotion ? .easeOut(duration: 0.2) : .spring(response: 0.38, dampingFraction: 0.82)) {
                     isExpanded.toggle()
                 }
-                Haptics.selection()
             } label: {
-                HStack(spacing: 6) {
-                    statusIcon
-                    Text(skillName)
-                        .font(.caption2.weight(.bold))
-                        .foregroundStyle(.primary)
-                    if durationMs > 0 {
-                        Text("• \(durationMs)ms")
-                            .font(.system(size: 9.5, design: .monospaced))
-                            .foregroundStyle(.secondary)
+                HStack(alignment: .top, spacing: 8) {
+                    StepBadge(name: skillName, failed: status == "error")
+                    VStack(alignment: .leading, spacing: 3) {
+                        Text(skillName).font(.subheadline).foregroundStyle(.primary).lineLimit(2)
+                        if durationMs > 0 {
+                            Text("\(durationMs)ms").font(.caption).monospacedDigit().foregroundStyle(.secondary)
+                        }
                     }
-
-                    Spacer()
-                    statusBadge
-
+                    Spacer(minLength: 0)
+                    statusIcon
                     if hasDetails {
-                        Image(systemName: isExpanded ? "chevron.up" : "chevron.down")
-                            .font(.system(size: 9, weight: .bold))
-                            .foregroundStyle(.secondary)
+                        Image(systemName: "chevron.down")
+                            .font(.caption.weight(.semibold)).foregroundStyle(.secondary)
+                            .rotationEffect(.degrees(isExpanded ? 180 : 0))
                     }
                 }
-                .padding(.horizontal, 10)
-                .padding(.vertical, 6)
+                .frame(minHeight: 44, alignment: .center)
+                .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
             .disabled(!hasDetails)
+            .accessibilityLabel("\(skillName), \(status)")
+            .accessibilityHint(hasDetails ? (isExpanded ? String(localized: "Hides the report") : String(localized: "Shows the report")) : "")
 
             if isExpanded && hasDetails {
-                VStack(alignment: .leading, spacing: 5) {
+                VStack(alignment: .leading, spacing: 12) {
                     if !parameters.isEmpty {
-                        VStack(alignment: .leading, spacing: 2) {
-                            Text("INPUT")
-                                .font(.system(size: 8.5, weight: .heavy, design: .monospaced))
-                                .foregroundColor(Color(hex: "#8B5CF6"))
-                            Text(parameters)
-                                .font(.system(size: 10, design: .monospaced))
-                                .foregroundStyle(.primary)
+                        VStack(alignment: .leading, spacing: 4) {
+                            Text("Input").font(.caption.weight(.semibold)).foregroundStyle(BotTint.ink(color))
+                            Text(parameters).font(.footnote.monospaced()).foregroundStyle(.primary)
+                                .textSelection(.enabled)
                         }
                     }
-                    
                     if !output.isEmpty {
-                        VStack(alignment: .leading, spacing: 2) {
-                            Text(outputIsProse ? "REPORT" : "OUTPUT")
-                                .font(.system(size: 8.5, weight: .heavy, design: .monospaced))
-                                .foregroundColor(Color(hex: "#10B981"))
+                        VStack(alignment: .leading, spacing: 4) {
+                            Text(outputIsProse ? "Report" : "Output")
+                                .font(.caption.weight(.semibold)).foregroundStyle(BotTint.ink(color))
                             if outputIsProse {
-                                Text(verbatim: output)
-                                    .font(.system(size: 13))
-                                    .foregroundStyle(.primary)
-                                    .textSelection(.enabled)
-                                    .fixedSize(horizontal: false, vertical: true)
+                                Text(verbatim: output).font(.body).foregroundStyle(.primary)
+                                    .textSelection(.enabled).fixedSize(horizontal: false, vertical: true)
                             } else {
-                                Text(output)
-                                    .font(.system(size: 10, design: .monospaced))
-                                    .foregroundStyle(.primary)
-                                    .lineLimit(6)
+                                Text(output).font(.footnote.monospaced()).foregroundStyle(.primary).lineLimit(6)
                             }
                         }
                     }
                 }
-                .padding(8)
-                .background(Color.secondary.opacity(0.10))
-                .clipShape(RoundedRectangle(cornerRadius: 8))
-                .transition(.opacity.combined(with: .move(edge: .top)))
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(12)
+                .background(BotTint.inset, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+                .transition(.opacity)
             }
         }
-        .padding(6)
-        .background(Color.secondary.opacity(0.10))
-        .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+        .padding(.horizontal, 12).padding(.vertical, 6)
+        .background(BotTint.theirs(color), in: RoundedRectangle(cornerRadius: 20, style: .continuous))
     }
 
-    /// The status the icon carries, not a brand mark: the web transcript
-    /// shows the same check, cross and spinner for settled and running tools.
-    @ViewBuilder
-    private var statusIcon: some View {
+    @ViewBuilder private var statusIcon: some View {
         switch status {
         case "success":
-            Image(systemName: "checkmark")
-                .font(.system(size: 11, weight: .bold))
-                .foregroundStyle(.green)
+            Image(systemName: "checkmark").font(.caption.weight(.semibold)).foregroundStyle(BotTint.ink(color))
+                .accessibilityHidden(true)
         case "error":
-            Image(systemName: "xmark")
-                .font(.system(size: 11, weight: .bold))
-                .foregroundStyle(.red)
+            Image(systemName: "xmark.circle.fill").font(.subheadline).foregroundStyle(.red)
+                .accessibilityHidden(true)
         case "running":
-            ProgressView()
-                .controlSize(.mini)
-                .tint(.orange)
-                .frame(width: 12, height: 12)
+            ProgressView().controlSize(.mini).tint(BotTint.ink(color))
+                .accessibilityLabel("Running")
         default:
-            Image(systemName: "circle.dotted")
-                .font(.system(size: 11))
-                .foregroundStyle(.orange)
-        }
-    }
-
-    @ViewBuilder
-    private var statusBadge: some View {
-        HStack(spacing: 3) {
-            Circle()
-                .fill(status == "success" ? Color.green : (status == "running" ? Color.orange : Color.red))
-                .frame(width: 5, height: 5)
-            Text(status.capitalized)
-                .font(.system(size: 9, weight: .bold))
-                .foregroundColor(status == "success" ? Color.green : (status == "running" ? Color.orange : Color.red))
+            Text(status.capitalized).font(.caption).foregroundStyle(.secondary)
         }
     }
 }

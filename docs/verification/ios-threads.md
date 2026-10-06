@@ -28,7 +28,8 @@ against that explicit simulator ID. For example, from `ios/`:
 ```sh
 xcodebuild -project OpenMausCompanion.xcodeproj -scheme OpenMausCompanion \
   -configuration Debug -destination 'platform=iOS Simulator,id=SIMULATOR_ID' \
-  -derivedDataPath /tmp/omb-ios-threads-build CODE_SIGNING_ALLOWED=NO test
+  -derivedDataPath /tmp/omb-ios-threads-build -packageAuthorizationProvider netrc \
+  CODE_SIGNING_ALLOWED=NO test
 ```
 
 `ThreadNavigationUITests` launches with `-store-preview -threads-preview`.
@@ -60,6 +61,51 @@ closes; that
 launches; and, in both densities, that the first section title clears the
 header's buttons and the last row, scrolled to the end, sits wholly above the
 floating Updates bar.
+
+### Home and Updates presentation
+
+Both densities keep the same native navigation and thread controls. Attention
+rows now start with the bot's own face (32pt compact, 40pt comfortable), with a
+hand, working arc, clock, or unread bell attached to its bottom-trailing corner.
+Bot rows use 32pt/44pt faces: the bot's colour carries a slow working arc, and
+waiting attaches a hand badge. Unread dots use the shared deep blue `#2E6FDB`,
+not the bot's colour. A teammate wait stays a quiet clock, never a spinner.
+Reduce Motion replaces each rotating arc with a static ring; inactive scenes
+pause it. Section headers retain their localized copy in sentence case. Folder
+disclosures use native SF folder symbols rather than emoji icons, keep their
+names and grouping, and retain minimum 44pt targets in both densities.
+
+Comfortable still shows the last-message preview and relative time, with
+larger text wrapping rather than a fixed-size row. The Updates pill keeps
+stacked faces, an orange needs-you count, and a subtle working spinner/count.
+Updates uses the same face/status language and 20pt rounded cards; queued sends
+and teammate waits carry a clock instead of a working arc. Inline
+answer buttons remain separate from the open-chat button. Sheet controls use
+48pt layout targets so the native inset presentation keeps their measured
+targets above 44pt; skill approvals still open the chat for review. The sheet's
+Done button supplements native swipe-to-dismiss.
+
+`RosterDensityUITests` additionally checks attention labels, sentence-case
+headers, Updates counts and statuses, navigation from Updates to the exact
+thread, disclosure/Updates reachability at XXL with RTL layout, and that tapping
+an inline answer does not also navigate into its chat.
+For visual review, launch the offline app with each fixture and density:
+
+```text
+-store-preview -roster-preview -companion.prefs.rosterDensity compact
+-store-preview -roster-preview -companion.prefs.rosterDensity comfortable
+-store-preview -threads-preview -companion.prefs.rosterDensity compact
+-store-preview -threads-preview -companion.prefs.rosterDensity comfortable
+```
+
+Append `-open-updates` to open the Updates sheet without pairing or UI
+automation. Use `-store-preview -open-updates` without a roster/thread flag to
+exercise the bundled approval's inline Allow/Deny buttons. Disable the island
+introduction with `-companion.prefs.islandIntro never`. Capture each fixture/density in light and
+dark with `xcrun simctl status_bar SIMULATOR_ID override --time 9:41` and
+`xcrun simctl io SIMULATOR_ID screenshot PATH`. Include the Updates sheet and
+an XXL/RTL pass; screenshot evidence belongs in
+`.impeccable/review/ios-home/` within the implementing worktree.
 
 Check on iPhone and iPad:
 
@@ -128,3 +174,28 @@ the fixture app before checking the bot row again.
 | Reopening Pepper before the fix | Reopening Pepper after choosing iCloud |
 | --- | --- |
 | ![Gmail reopened](assets/mobile-thread-selection/before.png) | ![iCloud restored](assets/mobile-thread-selection/after.png) |
+
+## Home and Updates redesign — 2026-10-06 local
+
+- Debug simulator build succeeded with the iOS 27 SDK.
+- All 888 CompanionCore tests passed.
+- All 9 `RosterDensityUITests` passed on the isolated iPhone 17 Pro Max:
+  `/tmp/omb-ioshome-folder-light.xcresult`. This includes both densities,
+  XXL/RTL disclosure and Updates reachability, exact thread destinations,
+  and an inline approval that stays in the sheet.
+- All 12 `ThreadNavigationUITests` and all 3 `SwipeBackUITests` passed in the
+  preceding combined run, `/tmp/omb-ioshome-green.xcresult`. That run exposed
+  a 42.4pt measured approval target under the native inset sheet; the 48pt
+  layout fix is covered by the later passing roster suite.
+- The final compact and comfortable folder-disclosure checks passed in light
+  and dark after the SF-symbol cutover and shared unread-colour update:
+  `/tmp/omb-ioshome-folder-light.xcresult` (10 tests, no failures) and
+  `/tmp/omb-ioshome-folder-dark.xcresult` (2 tests, no failures). Their retained
+  attachments include the expanded folders and exact thread destinations.
+- Native light/dark, compact/comfortable, approval, and XXL/RTL screenshots
+  were captured and opened on iPhone and iPad Pro 13-inch (M5). Evidence is
+  retained in the implementing worktree's `.impeccable/review/ios-home/`.
+  The temporary tablet simulator was removed after capture.
+- Only offline DEBUG fixtures were used. No physical-device pairing, live
+  provider traffic, dictation, uploads, or hardware VoiceOver verification
+  was performed.

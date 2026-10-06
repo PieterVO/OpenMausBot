@@ -34,13 +34,13 @@ struct BotThreadTree: View, Equatable {
     let session: Session
     let open: (Chat) -> Void
     let manage: (Chat) -> Void
+    @ScaledMetric(relativeTo: .body) private var scaledFace: CGFloat = 44
 
     /// What the tree draws from values; see the type's note on the bindings.
     static func == (lhs: Self, rhs: Self) -> Bool {
         lhs.bot == rhs.bot && lhs.queuedThreadIds == rhs.queuedThreadIds
             && lhs.heldThreadIds == rhs.heldThreadIds && lhs.session === rhs.session
     }
-
     /// A timed snooze ends on the wall clock, not on a server ping: bump
     /// this when the nearest expiry passes so its row folds back in without
     /// waiting for the next snapshot. Mirrors the desktop's useSnoozeExpiry.
@@ -74,7 +74,7 @@ struct BotThreadTree: View, Equatable {
                 }
             }
         }
-        .padding(.leading, 88)
+        .padding(.leading, 36 + min(scaledFace, 52))
         .padding(.trailing, 18)
         .padding(.bottom, isExpanded ? 12 : 0)
         .snoozeExpiryTick(nextSnoozeExpiry, tick: $snoozeTick)
@@ -87,13 +87,13 @@ struct BotThreadTree: View, Equatable {
                 if expandedBots.contains(bot.id) { expandedBots.remove(bot.id) } else { expandedBots.insert(bot.id) }
             } label: {
                 HStack(spacing: 6) {
-                    Image(systemName: isExpanded ? "chevron.down" : "chevron.right")
-                        .font(.system(size: 10, weight: .semibold))
+                    Image(systemName: isExpanded ? "chevron.down" : "chevron.forward")
+                        .font(.caption2.weight(.semibold))
                     Text("Threads")
-                    Text("\(count)").foregroundStyle(.secondary)
+                    Text("\(count)").monospacedDigit().foregroundStyle(.secondary)
                     Spacer(minLength: 0)
                 }
-                .font(.system(size: 13, weight: .medium))
+                .font(.footnote.weight(.medium))
                 .frame(minHeight: 44)
                 .contentShape(Rectangle())
             }
@@ -129,13 +129,13 @@ struct BotThreadTree: View, Equatable {
             threadLinks(tasks).padding(.leading, 8)
         } label: {
             HStack(spacing: 6) {
-                if let emoji = folder.emoji, !emoji.isEmpty { Text(emoji) }
-                else { Image(systemName: "folder") }
+                Image(systemName: "folder")
+                    .accessibilityHidden(true)
                 Text(folder.name).lineLimit(1)
             }
-            .font(.system(size: 13, weight: .medium))
+            .font(.footnote.weight(.medium))
             .foregroundStyle(.secondary)
-            .frame(minHeight: 40)
+            .frame(minHeight: 44)
         }
     }
 

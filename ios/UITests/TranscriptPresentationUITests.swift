@@ -108,7 +108,7 @@ final class TranscriptPresentationUITests: XCTestCase {
     func testHiddenSuppressesLiveReasoning() {
         let app = launchPreview(detail: "hidden", reasoning: true)
         XCTAssertTrue(app.buttons["assistant-turn.preview-turn"].waitForExistence(timeout: 5))
-        XCTAssertFalse(contains("Thinking…", in: app))
+        XCTAssertFalse(app.descendants(matching: .any)["thinking-row"].exists)
         // Thinking hidden, the bubble still says the bot is on it.
         assertTypingBubbleInView(app)
     }
@@ -116,7 +116,7 @@ final class TranscriptPresentationUITests: XCTestCase {
     @MainActor
     func testFullKeepsLiveReasoningAvailable() {
         let app = launchPreview(detail: "full", reasoning: true)
-        XCTAssertTrue(app.staticTexts["Thinking…"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.buttons["thinking-row"].waitForExistence(timeout: 5))
         XCTAssertTrue(app.buttons["assistant-turn.preview-turn"].exists)
     }
 
@@ -138,7 +138,20 @@ final class TranscriptPresentationUITests: XCTestCase {
     }
 
     @MainActor
-    private func launchPreview(detail: String, reasoning: Bool = false, focused: Bool = false, receipts: Bool = false, update: Bool = false, live: Bool = false, typing: Bool = false) -> XCUIApplication {
+    func testAnswerStreamWinsWhileReasoningRemainsAvailable() {
+        let app = launchPreview(detail: "full", reasoning: true, answer: true)
+        // The answer reveals at a steady pace rather than in one frame.
+        XCTAssertTrue(app.staticTexts.matching(NSPredicate(format: "label CONTAINS %@", "Here’s what I found so far.")).firstMatch.waitForExistence(timeout: 3))
+        let thinking = app.buttons["thinking-row"]
+        XCTAssertTrue(thinking.waitForExistence(timeout: 5))
+        XCTAssertTrue(thinking.label.contains("Thought for"), thinking.label)
+        thinking.tap()
+        XCTAssertTrue(app.descendants(matching: .any)["thinking-panel"].waitForExistence(timeout: 3))
+        screenshot("Answer wins, retained reasoning available on tap", in: app)
+    }
+
+    @MainActor
+    private func launchPreview(detail: String, reasoning: Bool = false, focused: Bool = false, receipts: Bool = false, update: Bool = false, live: Bool = false, answer: Bool = false, typing: Bool = false) -> XCUIApplication {
         continueAfterFailure = false
         let app = XCUIApplication()
         app.launchArguments = [
@@ -154,6 +167,7 @@ final class TranscriptPresentationUITests: XCTestCase {
             "-companion.onboarding.notificationsSeen", "YES"
         ]
         if reasoning { app.launchArguments.append("-chat-reasoning-preview") }
+        if answer { app.launchArguments.append("-chat-answer-preview") }
         if focused { app.launchArguments.append("-chat-focus-preview") }
         if receipts { app.launchArguments.append("-chat-compaction-preview") }
         if update { app.launchArguments.append("-chat-update-preview") }

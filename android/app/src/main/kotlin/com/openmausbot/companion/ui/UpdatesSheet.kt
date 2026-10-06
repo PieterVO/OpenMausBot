@@ -11,6 +11,7 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.heightIn
@@ -19,20 +20,19 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
 import androidx.compose.material.icons.filled.KeyboardArrowUp
-import androidx.compose.material.icons.filled.Notifications
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
-import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalBottomSheet
+import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -41,13 +41,15 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.semantics.clearAndSetSemantics
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.heading
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
-import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.unit.sp
 import com.openmausbot.companion.core.Chat
 import kotlinx.coroutines.launch
 
@@ -64,9 +66,12 @@ import kotlinx.coroutines.launch
 @Composable
 internal fun UpdatesBar(updates: List<ChatUpdate>, onOpen: () -> Unit, modifier: Modifier = Modifier) {
     val first = updates.firstOrNull()
-    val stack = remember(updates) { updates.take(UpdatesSummary.MASCOTS).map { it.chat.color } }
+    val stack = remember(updates) { updates.take(UpdatesSummary.MASCOTS).map { it.chat } }
+    val needsYou = updates.count { it.kind == UpdateKind.NEEDS_YOU }
+    val working = updates.count { it.kind == UpdateKind.WORKING }
     Row(
         modifier = modifier
+            .testTag("updates-bar")
             .chromeCapsule()
             .clip(CircleShape)
             .clickable(onClickLabel = stringResource(R.string.mobile_open_updates_2c80d633), role = Role.Button, onClick = onOpen)
@@ -76,7 +81,15 @@ internal fun UpdatesBar(updates: List<ChatUpdate>, onOpen: () -> Unit, modifier:
         verticalAlignment = Alignment.CenterVertically,
     ) {
         if (first != null) {
-            MascotStack(colors = stack)
+            Row(horizontalArrangement = Arrangement.spacedBy((-12).dp)) {
+                stack.forEach { chat ->
+                    Box(
+                        Modifier.background(MaterialTheme.colorScheme.surface, CircleShape).padding(2.dp),
+                    ) {
+                        ChatAvatar(chat = chat, size = 28.dp, animated = false)
+                    }
+                }
+            }
         }
 
         Column(
@@ -87,30 +100,60 @@ internal fun UpdatesBar(updates: List<ChatUpdate>, onOpen: () -> Unit, modifier:
                 horizontalArrangement = Arrangement.spacedBy(4.dp),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
-                if (first?.kind == UpdateKind.NEEDS_YOU) {
-                    Icon(
-                        imageVector = Icons.Filled.Notifications,
-                        contentDescription = null,
-                        tint = Color(MausPalette.argb(first.chat.color)),
-                        modifier = Modifier.size(13.dp),
-                    )
-                }
                 Text(
                     text = localizedUpdatesHeadline(updates),
-                    fontSize = 14.sp,
+                    style = MaterialTheme.typography.labelLarge,
                     fontWeight = FontWeight.SemiBold,
                     color = if (first == null) secondaryTint else MaterialTheme.colorScheme.onSurface,
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis,
                 )
             }
-            Text(
-                text = localizedUpdatesSubline(updates),
-                fontSize = 12.sp,
-                color = secondaryTint,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-            )
+            Row(
+                horizontalArrangement = Arrangement.spacedBy(6.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Text(
+                    text = localizedUpdatesSubline(updates),
+                    style = MaterialTheme.typography.labelSmall,
+                    color = secondaryTint,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier.weight(1f),
+                )
+                if (needsYou > 0) {
+                    val label = "${localizedMobileCopy(UpdatesSummary.section(UpdateKind.NEEDS_YOU))}: $needsYou"
+                    Text(
+                        text = needsYou.toString(),
+                        style = MaterialTheme.typography.labelSmall.copy(fontFeatureSettings = "tnum"),
+                        fontWeight = FontWeight.SemiBold,
+                        color = rosterNeedsYouInk,
+                        modifier = Modifier
+                            .testTag("updates-needs-you-count")
+                            .background(rosterNeedsYouContainer, CircleShape)
+                            .padding(horizontal = 6.dp, vertical = 2.dp)
+                            .clearAndSetSemantics { contentDescription = label },
+                    )
+                }
+                if (working > 0) {
+                    Row(
+                        horizontalArrangement = Arrangement.spacedBy(4.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        modifier = Modifier.testTag("updates-working-count"),
+                    ) {
+                        RosterWorkingIndicator(
+                            size = 10.dp,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            label = localizedMobileCopy(UpdatesSummary.section(UpdateKind.WORKING)),
+                        )
+                        Text(
+                            text = working.toString(),
+                            style = MaterialTheme.typography.labelSmall.copy(fontFeatureSettings = "tnum"),
+                            color = secondaryTint,
+                        )
+                    }
+                }
+            }
         }
 
         Icon(
@@ -158,46 +201,32 @@ private fun localizedUpdateLine(line: String): String {
 
 private val QUEUED_MESSAGES = Regex("^(\\d+) messages queued$")
 
-/** Up to three mascots overlapping, the way a group of faces reads at a glance. */
-@Composable
-internal fun MascotStack(colors: List<String>, size: Dp = 28.dp, overlap: Dp = 12.dp) {
-    Row(horizontalArrangement = Arrangement.spacedBy(-overlap)) {
-        colors.forEach { color ->
-            Box(
-                modifier = Modifier
-                    .background(MaterialTheme.colorScheme.surface, CircleShape)
-                    .padding(2.dp),
-            ) {
-                MausAvatar(color = color, size = size, state = MausState.IDLE, animated = false)
-            }
-        }
-    }
-}
-
 /** What the pill opens: the active chats, grouped by what they need. */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-internal fun UpdatesSheet(onOpen: (Chat) -> Unit, onDismiss: () -> Unit) {
-    val environment = LocalCompanion.current
-    val session = environment.session
-    val state by session.state.collectAsState()
-    val activityDetail by environment.chatPreferences.activityDetail.collectAsState()
-
-    val updates = remember(state, activityDetail) { state.updates(activityDetail) }
+internal fun UpdatesSheet(
+    updates: List<ChatUpdate>,
+    faces: Map<String, MausState>,
+    onOpen: (Chat) -> Unit,
+    onDismiss: () -> Unit,
+) {
     val sections = remember(updates) {
         UpdateKind.entries.mapNotNull { kind ->
             val items = updates.filter { it.kind == kind }
             if (items.isEmpty()) null else kind to items
         }
     }
-    // One pass over the fleet rather than one per row: resolving a face walks the
-    // chat's visible transcript.
-    val faces = remember(state, updates) {
-        updates.associate { it.id to MausState.forChat(it.chat, state) }
-    }
 
-    ModalBottomSheet(onDismissRequest = onDismiss) {
-        LazyColumn(contentPadding = PaddingValues(bottom = 24.dp)) {
+    ModalBottomSheet(
+        onDismissRequest = onDismiss,
+        sheetState = rememberModalBottomSheetState(),
+        containerColor = MaterialTheme.colorScheme.surface,
+    ) {
+        LazyColumn(
+            modifier = Modifier.testTag("updates-list"),
+            contentPadding = PaddingValues(bottom = 24.dp),
+            verticalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
             item(key = "header") {
                 Row(
                     modifier = Modifier
@@ -205,9 +234,9 @@ internal fun UpdatesSheet(onOpen: (Chat) -> Unit, onDismiss: () -> Unit) {
                         .padding(start = 20.dp, end = 20.dp, top = 2.dp, bottom = 6.dp),
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
-                    Text(stringResource(R.string.mobile_updates_c76d1807), fontSize = 22.sp, fontWeight = FontWeight.Bold)
+                    Text(stringResource(R.string.mobile_updates_c76d1807), style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
                     Spacer(Modifier.weight(1f))
-                    Text(localizedUpdatesCount(updates), fontSize = 13.sp, color = secondaryTint)
+                    Text(localizedUpdatesCount(updates), style = MaterialTheme.typography.labelMedium, color = secondaryTint)
                 }
             }
 
@@ -224,18 +253,13 @@ internal fun UpdatesSheet(onOpen: (Chat) -> Unit, onDismiss: () -> Unit) {
             sections.forEach { (kind, items) ->
                 item(key = "section-$kind") {
                     Text(
-                        text = localizedMobileCopy(UpdatesSummary.section(kind)).uppercase(),
-                        fontSize = 12.sp,
-                        fontWeight = FontWeight.Bold,
-                        letterSpacing = 0.5.sp,
-                        // Needs you wears the colour of the chat that heads it;
-                        // the other two stay quiet.
-                        color = if (kind == UpdateKind.NEEDS_YOU) {
-                            Color(MausPalette.argb(items.first().chat.color))
-                        } else {
-                            secondaryTint
-                        },
-                        modifier = Modifier.padding(start = 20.dp, end = 20.dp, top = 14.dp, bottom = 2.dp),
+                        text = localizedMobileCopy(UpdatesSummary.section(kind)),
+                        style = MaterialTheme.typography.titleSmall,
+                        fontWeight = FontWeight.SemiBold,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier
+                            .padding(start = 20.dp, end = 20.dp, top = 16.dp, bottom = 0.dp)
+                            .semantics { heading() },
                     )
                 }
                 items(items, key = { it.id }) { update ->
@@ -261,21 +285,37 @@ private fun UpdateRow(update: ChatUpdate, face: MausState, onOpen: () -> Unit) {
     Row(
         modifier = Modifier
             .fillMaxWidth()
+            .padding(horizontal = 16.dp)
+            .testTag("update-row.${update.id}")
+            .clip(RoundedCornerShape(20.dp))
+            .background(MaterialTheme.colorScheme.surfaceVariant)
             .clickable(role = Role.Button, onClick = onOpen)
-            .padding(horizontal = 20.dp, vertical = 10.dp),
+            .heightIn(min = MIN_TOUCH_TARGET)
+            .padding(14.dp),
         horizontalArrangement = Arrangement.spacedBy(12.dp),
         verticalAlignment = Alignment.Top,
     ) {
-        ChatAvatar(chat = update.chat, size = 40.dp, state = face)
+        RosterFace(
+            size = 40.dp,
+            color = update.chat.color,
+            working = update.kind == UpdateKind.WORKING,
+            badge = when (update.kind) {
+                UpdateKind.NEEDS_YOU -> RosterFaceBadge.WAITING
+                UpdateKind.WORKING -> null
+                UpdateKind.TO_REVIEW -> RosterFaceBadge.UNREAD
+            },
+        ) {
+            ChatAvatar(chat = update.chat, size = 40.dp, state = face, animated = false)
+        }
 
         Column(
             modifier = Modifier.weight(1f),
             verticalArrangement = Arrangement.spacedBy(3.dp),
         ) {
-            Text(update.chat.name, fontSize = 15.sp, fontWeight = FontWeight.SemiBold)
+            Text(update.chat.name, style = MaterialTheme.typography.bodyLarge, fontWeight = FontWeight.SemiBold)
             Text(
                 text = update.chat.threadTitle,
-                fontSize = 12.sp,
+                style = MaterialTheme.typography.labelMedium,
                 fontWeight = FontWeight.Medium,
                 color = secondaryTint,
                 maxLines = 1,
@@ -283,7 +323,7 @@ private fun UpdateRow(update: ChatUpdate, face: MausState, onOpen: () -> Unit) {
             )
             Text(
                 text = localizedUpdateLine(update.line),
-                fontSize = 14.sp,
+                style = MaterialTheme.typography.bodyMedium,
                 color = secondaryTint,
                 maxLines = if (update.kind == UpdateKind.NEEDS_YOU) 3 else 1,
                 overflow = TextOverflow.Ellipsis,
@@ -293,7 +333,7 @@ private fun UpdateRow(update: ChatUpdate, face: MausState, onOpen: () -> Unit) {
                 if (card.skillRequest != null) {
                     Text(
                         stringResource(R.string.mobile_open_the_chat_to_review_skill_md_6225775b),
-                        fontSize = 12.sp,
+                        style = MaterialTheme.typography.bodySmall,
                         fontWeight = FontWeight.Medium,
                         color = secondaryTint,
                         modifier = Modifier.padding(top = 6.dp),
@@ -301,9 +341,10 @@ private fun UpdateRow(update: ChatUpdate, face: MausState, onOpen: () -> Unit) {
                 } else {
                     // The answers are the card's own options, exactly as the chat
                     // screen draws them — never a choice invented here.
-                    Row(
+                    FlowRow(
                         horizontalArrangement = Arrangement.spacedBy(8.dp),
                         modifier = Modifier.padding(top = 6.dp),
+                        verticalArrangement = Arrangement.spacedBy(8.dp),
                     ) {
                         card.options.forEach { option ->
                             val refusal = ApprovalChoices.emphasis(option) == OptionEmphasis.SECONDARY
@@ -317,13 +358,14 @@ private fun UpdateRow(update: ChatUpdate, face: MausState, onOpen: () -> Unit) {
                                     }
                                 },
                                 enabled = !answering,
+                                modifier = Modifier.heightIn(min = MIN_TOUCH_TARGET),
                                 colors = if (refusal) {
                                     ButtonDefaults.filledTonalButtonColors()
                                 } else {
                                     ButtonDefaults.buttonColors()
                                 },
                             ) {
-                                Text(option, fontSize = 13.sp)
+                                Text(option, style = MaterialTheme.typography.labelLarge)
                             }
                         }
                     }
@@ -331,31 +373,11 @@ private fun UpdateRow(update: ChatUpdate, face: MausState, onOpen: () -> Unit) {
             }
         }
 
-        when (update.kind) {
-            UpdateKind.NEEDS_YOU -> Unit
-            UpdateKind.WORKING -> CircularProgressIndicator(
-                modifier = Modifier
-                    .padding(top = 10.dp)
-                    .size(16.dp),
-                strokeWidth = 2.dp,
-            )
-            UpdateKind.TO_REVIEW -> Row(
-                horizontalArrangement = Arrangement.spacedBy(6.dp),
-                verticalAlignment = Alignment.CenterVertically,
-                modifier = Modifier.padding(top = 10.dp),
-            ) {
-                Box(
-                    Modifier
-                        .size(10.dp)
-                        .background(Color(MausPalette.argb(update.chat.color)), CircleShape),
-                )
-                Icon(
-                    imageVector = Icons.AutoMirrored.Filled.KeyboardArrowRight,
-                    contentDescription = null,
-                    tint = secondaryTint.copy(alpha = 0.5f),
-                    modifier = Modifier.size(18.dp),
-                )
-            }
-        }
+        Icon(
+            imageVector = Icons.AutoMirrored.Filled.KeyboardArrowRight,
+            contentDescription = null,
+            tint = MaterialTheme.colorScheme.onSurfaceVariant,
+            modifier = Modifier.padding(top = 10.dp).size(18.dp),
+        )
     }
 }

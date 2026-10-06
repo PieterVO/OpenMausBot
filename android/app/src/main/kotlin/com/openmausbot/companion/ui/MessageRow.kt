@@ -1,6 +1,20 @@
 package com.openmausbot.companion.ui
 
 import com.openmausbot.companion.R
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.animateContentSize
+import androidx.compose.animation.core.spring
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.Animatable
+import androidx.compose.animation.core.tween
+import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.draw.rotate
+import androidx.compose.ui.platform.testTag
+import androidx.compose.material.icons.filled.Info
+import androidx.compose.material.icons.filled.KeyboardArrowDown
+import com.openmausbot.companion.core.toolCategory
+import com.openmausbot.companion.core.ToolCategory
+import com.openmausbot.companion.core.failedTurnCause
 
 import androidx.compose.ui.res.stringResource
 
@@ -52,6 +66,10 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Slider
+import androidx.compose.material3.SliderDefaults
+import androidx.compose.ui.draw.drawBehind
+import androidx.compose.ui.platform.LocalLayoutDirection
+import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -62,6 +80,10 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.runtime.key
+import androidx.compose.runtime.SideEffect
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.snapshotFlow
 import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Alignment
@@ -73,6 +95,9 @@ import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.ImageBitmap
+import androidx.compose.ui.res.painterResource
+import com.openmausbot.companion.core.Markdown
+import com.openmausbot.companion.core.MarkdownBlock
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.ClipEntry
 import androidx.compose.ui.platform.LocalClipboard
@@ -115,7 +140,11 @@ import com.openmausbot.companion.core.outcome
 import com.openmausbot.companion.core.presentation
 import com.openmausbot.companion.core.showsHeldNote
 import com.openmausbot.companion.core.summaryLine
+import com.openmausbot.companion.core.StreamingText
 import kotlinx.coroutines.flow.collectLatest
+import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.distinctUntilChangedBy
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
@@ -143,36 +172,64 @@ fun MessageRow(
     openAttachment: ((DisplayedMessageAttachment, Message, DownloadedFile?) -> Unit)? = null,
     /** Where an "Opened thread" chip goes; null leaves the chip a receipt. */
     openThread: ((ThreadRef) -> Unit)? = null,
+    /** A turn audit is reachable even when its slim line is switched off. */
+    digest: Message? = null,
+    /** An isolated row is a run start; transcript callers pass the actual boundary. */
+    showSender: Boolean = true,
 ) {
+    RecompositionProbe { "message:${message.id}" }
     val session = LocalCompanion.current.session
     val scope = rememberCoroutineScope()
     val haptics = rememberHaptics()
-    val state by session.state.collectAsState()
     val clipboard = LocalClipboard.current
     var menuOpen by remember { mutableStateOf(false) }
     var editing by remember { mutableStateOf(false) }
     var editText by remember { mutableStateOf("") }
     var selectingText by remember { mutableStateOf<String?>(null) }
+    var showingMeta by remember(message.id) { mutableStateOf(false) }
+    var showingDigest by remember(message.id) { mutableStateOf(false) }
 
     val bot = (chat as? Chat.BotChat)?.bot
-    val versions = remember(state, message.id) { state.versions(message, chat.threadId) }
+    // Runtime deltas do not change versions. Filter the thread's source before
+    // folding it, rather than subscribing every visible row to the whole fleet.
+    val versions = if (message.role == Message.Role.USER && message.kind == Message.Kind.TEXT) {
+        val initial = remember(session, chat.threadId, message.id, message.parentId) {
+            session.state.value.versions(message, chat.threadId)
+        }
+        val current by remember(session, chat.threadId, message.id, message.parentId) {
+            session.state.distinctUntilChangedBy { it.messages[chat.threadId] }
+                .map { it.versions(message, chat.threadId) }
+        }.collectAsState(initial = initial)
+        current
+    } else emptyList()
     val versionIndex = versions.indexOfFirst { it.id == message.id }
     // The stand-in for an edit the computer has not answered yet. It has no
     // server identity, so nothing may react to it or edit it again.
-    val editPending = state.pendingEdits[chat.threadId]
+    val editPending by remember(session, chat.threadId) {
+        session.state.map { it.pendingEdits[chat.threadId] }.distinctUntilChanged()
+    }.collectAsState(initial = session.state.value.pendingEdits[chat.threadId])
     val isPendingEdit = editPending?.placeholderId == message.id
     val mine = message.role == Message.Role.USER
+    val requestedReveal = LocalTextArrival.current
+    val accessible = touchExplorationEnabled()
+    val reveal = remember(message.id) { requestedReveal } && !accessible
+    val paced = if (!mine && message.kind == Message.Kind.TEXT)
+        key(message.id) { rememberPacedText(message.text.orEmpty(), reveal = reveal) } else null
 
     Box(
         modifier = Modifier
             .fillMaxWidth()
-            // Long-press is the context menu; a plain tap must stay inert, so no
-            // ripple is drawn for it.
+            .testTag(when (message.kind) {
+                Message.Kind.ACTIVITY -> "step-${message.id}"
+                else -> "message-${message.id}"
+            })
+            .semantics { if (paced != null) pacedText(paced) }
+            // Nested links keep their own taps; the bubble owns details and the menu.
             .combinedClickable(
                 interactionSource = remember { MutableInteractionSource() },
                 indication = null,
                 onLongClick = { menuOpen = true },
-                onClick = {},
+                onClick = { if (message.kind == Message.Kind.TEXT) showingMeta = !showingMeta },
             ),
     ) {
         Column(
@@ -181,20 +238,37 @@ fun MessageRow(
             verticalArrangement = Arrangement.spacedBy(6.dp),
         ) {
             // Only a thread the phone knows gets an "Open run" button.
-            val runRef = remember(state, message.routineRun?.executionThreadId) {
-                message.routineRun?.let { state.routineExecutionRef(it) }
+            val runRef = message.routineRun?.let { run ->
+                val ref by remember(session, run) {
+                    session.state.distinctUntilChangedBy { it.bots }
+                        .map { it.routineExecutionRef(run) }.distinctUntilChanged()
+                }.collectAsState(initial = session.state.value.routineExecutionRef(run))
+                ref
             }
+            CompositionLocalProvider(LocalPacedMessage provides paced) {
             MessageContent(
                 chat = chat,
                 message = message,
                 endsRun = endsRun,
+                showSender = showSender,
                 haptics = haptics,
                 openLink = openLink,
                 openAttachment = openAttachment,
                 openThread = openThread,
                 runRef = runRef,
             )
+            }
 
+            if (showingMeta && message.kind == Message.Kind.TEXT) {
+                Row(Modifier.testTag("message-meta-${message.id}").heightIn(min = 48.dp),
+                    verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                    Text(java.text.DateFormat.getTimeInstance(java.text.DateFormat.SHORT).format(java.util.Date(message.at.toLong())),
+                        style = MaterialTheme.typography.labelSmall, color = secondaryTint)
+                    if (digest != null) Text("· ${localizedMobileCopy("What I did")}", color = chatTint.ink,
+                        style = MaterialTheme.typography.labelSmall,
+                        modifier = Modifier.clickable(role = Role.Button) { showingDigest = true }.padding(vertical = 12.dp))
+                }
+            }
             message.comm?.let {
                 Text(
                     text = stringResource(R.string.mobile_messaged_it_withname_bd9371e7, it.withName),
@@ -320,6 +394,10 @@ fun MessageRow(
                     },
                 )
             }
+            if (digest != null) DropdownMenuItem(
+                text = { Text(localizedMobileCopy("What I did")) },
+                onClick = { menuOpen = false; showingDigest = true },
+            )
             // Attachment messages cannot be reconstructed by a text-only edit.
             // The policy also keeps their private transport paths out of the UI.
             val editableText = MessageActions.editableText(message)
@@ -377,6 +455,7 @@ fun MessageRow(
     selectingText?.let { text ->
         SelectableTextDialog(text = text, onDismiss = { selectingText = null })
     }
+    if (showingDigest && digest != null) DigestSheet(digest, chat.name, chat.color) { showingDigest = false }
 }
 
 /**
@@ -434,6 +513,7 @@ private fun MessageContent(
     chat: Chat,
     message: Message,
     endsRun: Boolean,
+    showSender: Boolean,
     haptics: Haptics,
     openLink: ((String, Message) -> Unit)?,
     openAttachment: ((DisplayedMessageAttachment, Message, DownloadedFile?) -> Unit)?,
@@ -441,7 +521,7 @@ private fun MessageContent(
     runRef: ThreadRef?,
 ) {
     when (message.kind) {
-        Message.Kind.TEXT -> TextBubble(chat.threadId, message, endsRun, openLink, openAttachment)
+        Message.Kind.TEXT -> TextBubble(chat.threadId, message, endsRun, openLink, openAttachment, chat.color, showSender)
         // A structured ask draws its own card: its answers are the model's
         // questions, not an allow/deny a tap could stand for.
         Message.Kind.OPTIONS -> if (QuestionCardRules.drawsQuestionCard(message)) {
@@ -450,7 +530,8 @@ private fun MessageContent(
             CardView(chat, message, haptics)
         }
         Message.Kind.ACTIVITY -> {
-            ActivityChip(message.tool, message.threadRef, openThread, teammateReport = message.threadRef != null || message.comm != null)
+            ActivityChip(message.tool, message.threadRef, openThread, teammateReport = message.threadRef != null || message.comm != null,
+                busy = chat.busy)
             // Claude Code too old for the model: offer the update on the
             // engine this bot's thread runs on. Rooms have no single engine.
             val claudeInstance = (chat as? Chat.BotChat)?.bot
@@ -465,9 +546,8 @@ private fun MessageContent(
             detail = message.compaction?.summary ?: message.text.orEmpty(),
         )
         Message.Kind.SCREEN -> ScreenShot(chat.threadId, message)
-        // The turn's audit, as a chip that opens its sections. The activity
-        // setting already dropped it when tool calls are hidden.
-        Message.Kind.DIGEST -> TurnDigestChip(message)
+        // Work summaries have their own preference, independent of activity detail.
+        Message.Kind.DIGEST -> TurnDigestChip(message, chat.name, chat.color)
         Message.Kind.ROUTINE_RUN -> RoutineRunCardView(
             message = message,
             openRun = if (runRef != null && openThread != null) {
@@ -482,7 +562,7 @@ private fun MessageContent(
         // show, show nothing — a placeholder saying "unsupported" is a worse gap
         // than the gap.
         Message.Kind.UNKNOWN -> if (!message.text.isNullOrEmpty()) {
-            TextBubble(chat.threadId, message, endsRun, openLink, openAttachment)
+            TextBubble(chat.threadId, message, endsRun, openLink, openAttachment, chat.color, showSender)
         }
     }
 }
@@ -494,13 +574,32 @@ private fun TextBubble(
     endsRun: Boolean,
     openLink: ((String, Message) -> Unit)?,
     openAttachment: ((DisplayedMessageAttachment, Message, DownloadedFile?) -> Unit)?,
+    color: String,
+    showSender: Boolean,
 ) {
     val mine = message.role == Message.Role.USER
+    val tint = conversationTint(message.from?.color ?: color)
     val tail = TranscriptLayout.tail(message, endsRun)
-    // A reply that is *entirely* a patch or a table is drawn as one. The gate is
-    // in `:core` and it is strict: anything with a sentence in it stays a
-    // paragraph, because a card around a paragraph hides the paragraph.
-    val card = remember(message.id, message.role, message.text) { TranscriptCards.of(message) }
+    val paced = LocalPacedMessage.current
+    val visible = paced?.visible ?: message.text.orEmpty()
+    val revealEnd = remember(message.text, visible) {
+        if (paced != null) StreamingText.revealedEnd(message.text.orEmpty(), visible.length, final = true) else visible.length
+    }
+    val markdown = remember(message.id) { Markdown.Incremental() }
+    val revealBubble = LocalTextArrival.current && !touchExplorationEnabled()
+    val fade = remember(message.id) { Animatable(if (revealBubble) 0f else 1f) }
+    LaunchedEffect(message.id, paced?.motion, revealBubble) {
+        if (paced?.motion == false || !revealBubble) fade.snapTo(1f)
+        else if (fade.value < 1f) fade.animateTo(1f, tween(120))
+    }
+    // A patch still has its dedicated card; Markdown owns both embedded and whole tables.
+    val card = remember(message.id, message.role, message.text) { if (mine) null else TranscriptCards.diff(message.text.orEmpty()) }
+    val blocks = remember(message.text, revealEnd, paced?.revealing, mine, card) {
+        if (mine || card != null) emptyList()
+        else if (paced != null) markdown.blocks(message.text.orEmpty(), revealEnd, closePartial = paced.revealing)
+        else Markdown.blocks(visible)
+    }
+    val hasTable = blocks.any { it is MarkdownBlock.Table }
     // Shared attachments are protocol tags in stored user text. They are not
     // prose, and a server-controlled path must never be presented as a link.
     val attached = remember(message.id, message.text) { AttachedMessageContent.parse(message.text.orEmpty()) }
@@ -510,6 +609,7 @@ private fun TextBubble(
     val bubble = card == null
     // No face beside the bubble: the bot's face is in the header, and in a room
     // the name line says who spoke. The bubble sits at the edge.
+    androidx.compose.runtime.CompositionLocalProvider(LocalConversationTint provides tint) {
     Row(
         modifier = Modifier.fillMaxWidth(),
         horizontalArrangement = if (mine) Arrangement.End else Arrangement.Start,
@@ -517,9 +617,9 @@ private fun TextBubble(
     ) {
         // iOS spaces the far side with `Spacer(minLength:)`; a non-filling weight
         // lets the bubble shrink to its text while never crossing that gutter.
-        if (mine) Spacer(Modifier.width(56.dp))
+        if (mine) Spacer(Modifier.fillMaxWidth(0.22f))
         Column(
-            modifier = Modifier
+            modifier = Modifier.semantics { this[BubbleMotionAlpha] = fade.value }.graphicsLayer { alpha = fade.value }
                 .weight(1f, fill = false)
                 .widthIn(max = 640.dp)
                 // Room for the tail below, so the next row does not sit on it.
@@ -528,10 +628,10 @@ private fun TextBubble(
                     if (bubble) {
                         Modifier
                             .background(
-                                if (mine) BubbleColor.mine else BubbleColor.theirs,
+                                if (mine) BubbleColor.mine else tint.theirs,
                                 SpeechBubbleShape.of(tail),
                             )
-                            .padding(horizontal = 15.dp, vertical = 11.dp)
+                            .padding(horizontal = 14.dp, vertical = 9.dp)
                     } else {
                         Modifier
                     },
@@ -540,13 +640,13 @@ private fun TextBubble(
         ) {
             // Rooms attribute each line to the member who said it. Only theirs:
             // your own bubble is already on your side.
-            if (!mine) {
+            if (!mine && showSender) {
                 message.from?.let {
                     Text(
                         text = it.name,
                         fontSize = 13.sp,
                         fontWeight = FontWeight.SemiBold,
-                        color = Color(MausPalette.argb(it.color)),
+                        color = tint.ink,
                     )
                 }
             }
@@ -563,7 +663,6 @@ private fun TextBubble(
             message.attachedFiles.forEach { attachment ->
                 SharedAttachmentView(
                     threadId, message, attachment, openAttachment,
-                    foreground = if (mine) BubbleColor.mineText else MaterialTheme.colorScheme.onSurface,
                 )
             }
             // Bots get markdown, you do not — the same split the desktop makes.
@@ -574,7 +673,6 @@ private fun TextBubble(
             // left out: selecting text that is still growing fights the reader.
             when (card) {
                 is TranscriptCard.Diff -> DiffCard(card)
-                is TranscriptCard.Table -> DataTableCard(card)
                 null -> if (webhook != null) {
                     WebhookMessageBody(webhook)
                 } else if (mine) {
@@ -591,23 +689,20 @@ private fun TextBubble(
                             SelectionContainer {
                                 Text(
                                     text = attached.text,
-                                    fontSize = 17.sp,
+                                    style = MaterialTheme.typography.bodyLarge,
                                     color = BubbleColor.mineText,
                                 )
                             }
                         }
                     }
                 } else {
-                    SelectionContainer {
-                        MarkdownText(
-                            source = message.text.orEmpty(),
-                            openLink = openLink?.let { open -> { url -> open(url, message) } },
-                        )
-                    }
+                    MarkdownBlocks(blocks = blocks, settling = paced?.revealing == true && paced.motion,
+                        openLink = openLink?.let { open -> { url -> open(url, message) } })
                 }
             }
         }
-        if (!mine) Spacer(Modifier.width(44.dp))
+        if (!mine) Spacer(Modifier.fillMaxWidth(if (hasTable || card != null) 0.08f else 0.20f))
+    }
     }
 }
 
@@ -617,9 +712,8 @@ private fun SharedAttachmentView(
     message: Message,
     attachment: DisplayedMessageAttachment,
     onOpen: ((DisplayedMessageAttachment, Message, DownloadedFile?) -> Unit)?,
-    /** Your own bubble is blue with white text; a bot's file sits on the theme surface. */
-    foreground: Color = BubbleColor.mineText,
 ) {
+    val foreground = MaterialTheme.colorScheme.onSurface
     if (attachment.kind == DisplayedMessageAttachment.Kind.IMAGE) {
         SharedImageAttachment(threadId, message, attachment, onOpen)
         return
@@ -628,8 +722,8 @@ private fun SharedAttachmentView(
     Row(
         modifier = Modifier
             .widthIn(max = 360.dp)
-            .clip(RoundedCornerShape(16.dp))
-            .background(foreground.copy(alpha = 0.10f))
+            .clip(RoundedCornerShape(20.dp))
+            .background(chatTint.theirs)
             .clickable(enabled = onOpen != null, role = Role.Button) {
                 onOpen?.invoke(attachment, message, null)
             }
@@ -696,7 +790,7 @@ private fun SharedImageAttachment(
     attachment: DisplayedMessageAttachment,
     onOpen: ((DisplayedMessageAttachment, Message, DownloadedFile?) -> Unit)?,
 ) {
-    val foreground = if (message.role == Message.Role.USER) BubbleColor.mineText else MaterialTheme.colorScheme.onSurface
+    val foreground = MaterialTheme.colorScheme.onSurface
     val session = LocalCompanion.current.session
     val shapeKey = "$threadId\u001F${message.id}\u001F${attachment.path}"
     var attempt by remember(message.id, attachment.path) { mutableStateOf(0) }
@@ -739,8 +833,8 @@ private fun SharedImageAttachment(
     Column(
         modifier = Modifier
             .widthIn(max = maxWidth.dp)
-            .clip(RoundedCornerShape(16.dp))
-            .background(foreground.copy(alpha = 0.10f))
+            .clip(RoundedCornerShape(20.dp))
+            .background(chatTint.theirs)
             .clickable(enabled = ready != null && onOpen != null, role = Role.Button) {
                 ready?.let { onOpen?.invoke(attachment, message, it.file) }
             }
@@ -841,7 +935,7 @@ private fun VoiceNoteAttachmentView(
     message: Message,
     note: DisplayedMessageAttachment,
 ) {
-    val foreground = if (message.role == Message.Role.USER) BubbleColor.mineText else MaterialTheme.colorScheme.onSurface
+    val foreground = MaterialTheme.colorScheme.onSurface
     val session = LocalCompanion.current.session
     val player = LocalCompanion.current.voiceNotes
     val liveCall by LocalCompanion.current.liveCalls.state.collectAsState()
@@ -915,17 +1009,17 @@ private fun VoiceNoteAttachmentView(
         Row(
             modifier = Modifier
                 .widthIn(max = 360.dp)
-                .clip(RoundedCornerShape(16.dp))
-                .background(foreground.copy(alpha = 0.10f))
+                .clip(RoundedCornerShape(20.dp))
+                .background(chatTint.theirs)
                 .padding(horizontal = 12.dp, vertical = 8.dp),
             horizontalArrangement = Arrangement.spacedBy(10.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
             Box(
                 modifier = Modifier
-                    .size(28.dp)
+                    .size(48.dp)
                     .clip(CircleShape)
-                    .background(MaterialTheme.colorScheme.primary.copy(alpha = if (playable) 1f else 0.38f))
+                    .background(chatTint.ink.copy(alpha = if (playable) 1f else 0.38f))
                     .clickable(role = Role.Button, enabled = playable) {
                         when {
                             playing -> player.pause()
@@ -950,13 +1044,13 @@ private fun VoiceNoteAttachmentView(
                         CircularProgressIndicator(
                             modifier = Modifier.size(14.dp),
                             strokeWidth = 2.dp,
-                            color = Color.White,
+                            color = chatTint.actionText,
                         )
-                    playing -> VoiceNotePauseGlyph(Color.White)
+                    playing -> VoiceNotePauseGlyph(chatTint.actionText)
                     else -> Icon(
                         imageVector = Icons.Filled.PlayArrow,
                         contentDescription = null,
-                        tint = Color.White,
+                        tint = chatTint.actionText,
                         modifier = Modifier.size(20.dp),
                     )
                 }
@@ -974,6 +1068,7 @@ private fun VoiceNoteAttachmentView(
                 },
                 // Like the desktop range input: no scrubbing until the length is known.
                 enabled = active != null && durationMs != null,
+                colors = SliderDefaults.colors(thumbColor = chatTint.ink, activeTrackColor = chatTint.ink, inactiveTrackColor = chatTint.inset),
                 modifier = Modifier
                     .weight(1f)
                     .semantics { contentDescription = "Seek voice note" },
@@ -1016,112 +1111,60 @@ private fun VoiceNotePauseGlyph(color: Color) {
     }
 }
 
-/**
- * A tool the bot ran, and what became of it — the status half of
- * `ios/App/Cards/SkillExecutionReceiptView.swift`.
- *
- * Deliberately quiet: these are the bulk of a busy transcript and they are
- * context, not content. So the receipt is a dot and a name, and the badge word
- * appears only for the two states worth a glance ([ActivityReceipt.showsLabel]).
- * A row that failed keeps the warning glyph it already had, so failure is a
- * shape and not only a colour — and the whole row reads as one sentence to a
- * screen reader whichever state it is in.
- *
- * Most of iOS's detail is not here, because it has no data: `durationMs` and
- * `parameters` are absent from [ToolActivity]. Nothing to expand means nothing
- * to tap, which is why the row is not a button — except a chip that names a
- * thread it opened, which is the link to that thread. The one exception is
- * [ToolActivity.output], a teammate's report, which folds open under the row.
- */
+/** A step keeps its thread link and teammate report; raw tool logs stay on the computer. */
 @Composable
 private fun ActivityChip(
     tool: ToolActivity?,
     threadRef: ThreadRef? = null,
     openThread: ((ThreadRef) -> Unit)? = null,
-    /** The chip reports a teammate's work (it links a thread or a room). Only
-     * then does [ToolActivity.output] show: an ordinary tool chip carries raw
-     * output too, and that log stays on the computer's side. */
     teammateReport: Boolean = false,
+    busy: Boolean = true,
 ) {
     if (tool == null) return
+    val failed = tool.ok == false
     val status = ActivityReceipt.status(tool.ok)
-    val tint = when (status) {
-        ActivityStatus.RUNNING -> MaterialTheme.colorScheme.tertiary
-        ActivityStatus.SUCCESS -> secondaryTint
-        ActivityStatus.ERROR -> MaterialTheme.colorScheme.error
-    }
+    val ink = if (failed) MaterialTheme.colorScheme.error else chatTint.ink
     val haptics = rememberHaptics()
-    val linked = if (threadRef != null && openThread != null) {
-        Modifier
-            .heightIn(min = MIN_TOUCH_TARGET)
-            .clickable(role = Role.Button) {
-                haptics.play(TactileAction.OPEN_THREAD_CHIP)
-                openThread(threadRef)
-            }
-    } else {
-        Modifier
-    }
-    Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
-        Row(
-            modifier = Modifier
-                .padding(start = 4.dp)
-                .then(linked)
-                .semantics(mergeDescendants = true) {
-                    contentDescription = ActivityReceipt.announcement(tool.label, status)
-                },
-            horizontalArrangement = Arrangement.spacedBy(6.dp),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            if (status == ActivityStatus.ERROR) {
-                Icon(
-                    imageVector = Icons.Filled.Warning,
-                    contentDescription = null,
-                    tint = tint,
-                    modifier = Modifier.size(14.dp),
-                )
-            } else {
-                Box(
-                    modifier = Modifier
-                        .size(ACTIVITY_DOT)
-                        .background(tint, CircleShape),
-                )
-            }
-            Text(
-                text = tool.label,
-                fontSize = 13.sp,
-                maxLines = ActivityReceipt.nameLines(status),
-                color = if (status == ActivityStatus.ERROR) tint else secondaryTint,
-                // measured after the badge, so a wrapped failure never pushes it out
-                modifier = Modifier.weight(1f, fill = false),
-            )
-            if (ActivityReceipt.showsLabel(status)) {
-                Text(
-                    text = ActivityReceipt.label(status),
-                    fontSize = 12.sp,
-                    fontWeight = FontWeight.Medium,
-                    maxLines = 1,
-                    color = tint,
-                )
-            }
+    if (tool.name.startsWith("notice:")) {
+        Row(Modifier.fillMaxWidth().padding(vertical = 8.dp), horizontalArrangement = Arrangement.Center,
+            verticalAlignment = Alignment.CenterVertically) {
+            Icon(Icons.Filled.Info, null, tint = secondaryTint, modifier = Modifier.size(14.dp))
+            Text(tool.label.removePrefix("notice:").trim(), style = MaterialTheme.typography.bodySmall,
+                color = secondaryTint, modifier = Modifier.padding(start = 6.dp))
         }
-        // A teammate's report under its "replied" chip: a few lines, the rest on
-        // tap. Its own tap target, so the chip above still opens the thread.
+        return
+    }
+    val failedTurn = failedTurnCause(tool.name) != null
+    Column(Modifier.then(if (failedTurn)
+        Modifier.fillMaxWidth(0.92f).background(ink.copy(alpha = 0.10f), RoundedCornerShape(20.dp)).padding(14.dp)
+        else Modifier.padding(vertical = 8.dp)), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+        Row(Modifier.then(if (threadRef != null && openThread != null)
+            Modifier.heightIn(min = MIN_TOUCH_TARGET).clickable(role = Role.Button) {
+                haptics.play(TactileAction.OPEN_THREAD_CHIP); openThread(threadRef)
+            } else Modifier).semantics(mergeDescendants = true) {
+                contentDescription = ActivityReceipt.announcement(tool.label, status)
+            }, horizontalArrangement = Arrangement.spacedBy(10.dp), verticalAlignment = Alignment.Top) {
+            if (failedTurn) Icon(Icons.Filled.Warning, null, tint = ink, modifier = Modifier.size(22.dp))
+            else StepBadge(toolCategory(tool.name), failed)
+            Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(3.dp)) {
+                Text(tool.label, style = MaterialTheme.typography.bodyMedium, maxLines = if (failedTurn) Int.MAX_VALUE else 2,
+                    color = MaterialTheme.colorScheme.onSurface)
+                tool.summary?.takeIf(String::isNotBlank)?.let { summary ->
+                    Text(summary, style = MaterialTheme.typography.bodySmall, color = secondaryTint,
+                        fontFamily = if (toolCategory(tool.name) == ToolCategory.SHELL) FontFamily.Monospace else null,
+                        maxLines = 1, overflow = TextOverflow.MiddleEllipsis)
+                }
+            }
+            if (failed) StepFailure(Modifier.size(16.dp))
+            else if (tool.ok == null && busy) CircularProgressIndicator(Modifier.size(14.dp), strokeWidth = 1.5.dp, color = ink)
+        }
         tool.output?.trim()?.takeIf { teammateReport && it.isNotEmpty() }?.let { output ->
             var expanded by remember(output) { mutableStateOf(false) }
-            Text(
-                text = output,
-                fontSize = 13.sp,
-                color = secondaryTint,
-                maxLines = if (expanded) Int.MAX_VALUE else TOOL_OUTPUT_LINES,
-                overflow = TextOverflow.Ellipsis,
-                modifier = Modifier
-                    .padding(start = 4.dp + ACTIVITY_DOT + 6.dp)
-                    .clickable(role = Role.Button) {
-                        haptics.play(TactileAction.TOGGLE_ACTIVITY_RUN)
-                        expanded = !expanded
-                    }
-                    .semantics { stateDescription = if (expanded) "Expanded" else "Collapsed" },
-            )
+            Text(output, style = MaterialTheme.typography.bodySmall, color = secondaryTint,
+                maxLines = if (expanded) Int.MAX_VALUE else TOOL_OUTPUT_LINES, overflow = TextOverflow.Ellipsis,
+                modifier = Modifier.padding(start = 32.dp).heightIn(min = 48.dp).clickable(role = Role.Button) {
+                    haptics.play(TactileAction.TOGGLE_ACTIVITY_RUN); expanded = !expanded
+                }.semantics { stateDescription = if (expanded) "Expanded" else "Collapsed" })
         }
     }
 }
@@ -1154,11 +1197,7 @@ private fun ReceiptChip(label: String, detail: String) {
             horizontalArrangement = Arrangement.spacedBy(6.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            Box(
-                modifier = Modifier
-                    .size(ACTIVITY_DOT)
-                    .background(secondaryTint, CircleShape),
-            )
+            Icon(painterResource(R.drawable.ic_tool_layers), null, modifier = Modifier.size(14.dp), tint = secondaryTint)
             Text(text = label, fontSize = 13.sp, maxLines = 1, color = secondaryTint)
         }
         if (expanded && detail.isNotEmpty() && detail != label) {
@@ -1167,76 +1206,53 @@ private fun ReceiptChip(label: String, detail: String) {
     }
 }
 
-/** Several consecutive successful/running activity receipts, folded on demand. */
+/** A reversible trail; the stable first receipt owns expansion while later steps arrive. */
 @Composable
-fun ActivityRunChip(items: List<Message>, openThread: ((ThreadRef) -> Unit)? = null) {
+fun ActivityRunChip(items: List<Message>, openThread: ((ThreadRef) -> Unit)? = null, busy: Boolean = true) {
     if (items.isEmpty()) return
     val haptics = rememberHaptics()
-    // Keyed on the run's identity — the same one the LazyColumn keys the row by
-    // (`TranscriptRow.ActivityRun.id = "run.${head.id}"`). Keying on the last id
-    // too would throw the reader's disclosure away on every receipt that lands
-    // while the run is still going. iOS holds a `@State` with no key at all.
     var expanded by remember(items.first().id) { mutableStateOf(false) }
-    val running = items.any { it.tool?.ok == null }
-    val summary = if (running) {
-        stringResource(R.string.mobile_running_steps, items.size)
-    } else {
-        stringResource(R.string.mobile_ran_steps, items.size)
-    }
-    Column(
-        modifier = Modifier.padding(start = 4.dp),
-        verticalArrangement = Arrangement.spacedBy(5.dp),
-    ) {
-        // The pill is ~30 dp tall; the target around it is MIN_TOUCH_TARGET, the
-        // way TouchTarget does it for the round buttons. Not TouchTarget itself:
-        // that helper is a square box, which would clip a capsule this wide.
-        Box(
-            modifier = Modifier
-                .heightIn(min = MIN_TOUCH_TARGET)
-                .clickable(role = Role.Button) {
-                    expanded = !expanded
-                    haptics.play(TactileAction.TOGGLE_ACTIVITY_RUN)
+    val running = busy && items.any { it.tool?.ok == null }
+    val summary = stringResource(if (running) R.string.mobile_running_steps else R.string.mobile_ran_steps, items.size)
+    val angle by animateFloatAsState(if (expanded) 180f else 0f, label = "Step disclosure")
+    val connector = MaterialTheme.colorScheme.outlineVariant
+    val rtl = LocalLayoutDirection.current == LayoutDirection.Rtl
+    Column(Modifier.testTag("step-run-run.${items.first().id}").animateContentSize(spring(dampingRatio = 0.82f, stiffness = 380f))) {
+        Row(Modifier.fillMaxWidth().heightIn(min = 48.dp).clickable(role = Role.Button) {
+            expanded = !expanded; haptics.play(TactileAction.TOGGLE_ACTIVITY_RUN)
+        }.semantics { stateDescription = if (expanded) "Expanded" else "Collapsed" },
+            verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            Box(Modifier.width((22 + (minOf(3, items.size) - 1) * 16).dp).height(22.dp)) {
+                items.take(3).forEachIndexed { index, item ->
+                    StepBadge(toolCategory(item.tool?.name.orEmpty()), modifier = Modifier.padding(start = (index * 16).dp)
+                        .border(1.5.dp, MaterialTheme.colorScheme.surface, CircleShape))
                 }
-                .localizedSemantics(contentDescription = {
-                    stringResource(
-                        if (expanded) R.string.mobile_a11y_summary_expanded
-                        else R.string.mobile_a11y_summary_collapsed,
-                        summary,
-                    )
-                }),
-            contentAlignment = Alignment.CenterStart,
-        ) {
-            Row(
-                modifier = Modifier
-                    .background(secondaryTint.copy(alpha = 0.10f), RoundedCornerShape(18.dp))
-                    .padding(horizontal = 10.dp, vertical = 6.dp),
-                horizontalArrangement = Arrangement.spacedBy(6.dp),
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                if (running) {
-                    CircularProgressIndicator(modifier = Modifier.size(13.dp), strokeWidth = 1.5.dp)
-                } else {
-                    Icon(
-                        imageVector = Icons.Filled.Check,
-                        contentDescription = null,
-                        tint = Color(0xFF22C55E),
-                        modifier = Modifier.size(14.dp),
-                    )
-                }
-                Text(summary, fontSize = 13.sp, fontWeight = FontWeight.Medium)
-                Text(if (expanded) stringResource(R.string.mobile_hide_34d8b60f) else stringResource(R.string.mobile_show_d97d1ee3), fontSize = 12.sp, color = secondaryTint)
             }
+            Text(if (running) "$summary · ${items.last().tool?.label.orEmpty()}" else summary,
+                style = MaterialTheme.typography.bodyMedium, color = secondaryTint, maxLines = 2, modifier = Modifier.weight(1f))
+            Icon(Icons.Filled.KeyboardArrowDown, null, tint = secondaryTint, modifier = Modifier.size(18.dp).rotate(angle))
         }
-        if (expanded) {
-            Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                items.forEach { item -> ActivityChip(item.tool, item.threadRef, openThread, teammateReport = item.threadRef != null || item.comm != null) }
+        AnimatedVisibility(expanded) {
+            Column {
+                items.forEachIndexed { index, item ->
+                    StepReveal(index) {
+                        Row(Modifier.testTag("step-${item.id}").drawBehind {
+                            val x = if (rtl) size.width - 11.dp.toPx() else 11.dp.toPx()
+                            if (index > 0) drawLine(connector, androidx.compose.ui.geometry.Offset(x, 0f),
+                                androidx.compose.ui.geometry.Offset(x, 8.dp.toPx()), 1.dp.toPx())
+                            if (index < items.lastIndex) drawLine(connector, androidx.compose.ui.geometry.Offset(x, 30.dp.toPx()),
+                                androidx.compose.ui.geometry.Offset(x, size.height), 1.dp.toPx())
+                        }) {
+                            ActivityChip(item.tool, item.threadRef, openThread,
+                                teammateReport = item.threadRef != null || item.comm != null, busy = busy)
+                        }
+                    }
+                }
             }
         }
     }
 }
 
-/** The receipt's status dot, sized to sit level with the 13 sp name beside it. */
-private val ACTIVITY_DOT = 7.dp
 
 /**
  * An option card. When it still has a request behind it, this is the screen the
@@ -1250,24 +1266,18 @@ private fun CardView(chat: Chat, message: Message, haptics: Haptics) {
     var answering by remember(message.id) { mutableStateOf(false) }
     // The full request behind a short card, collapsed until asked for.
     var showingDetails by remember(message.id) { mutableStateOf(false) }
+    var wasPending by remember(message.id) { mutableStateOf(card.isPending) }
+    LaunchedEffect(card.answered, card.dismissed) {
+        if (wasPending && (card.answered != null || card.dismissed == true)) haptics.play(HapticCue.SUCCESS)
+        wasPending = card.isPending
+    }
     val skillRequest = card.skillRequest
     val presentation = card.presentation
 
     Column(
         modifier = Modifier
-            .fillMaxWidth()
-            .background(secondaryTint.copy(alpha = 0.13f), RoundedCornerShape(22.dp))
-            .then(
-                if (card.isPending) {
-                    Modifier.border(
-                        1.5.dp,
-                        MaterialTheme.colorScheme.primary,
-                        RoundedCornerShape(22.dp),
-                    )
-                } else {
-                    Modifier
-                },
-            )
+            .fillMaxWidth(0.92f)
+            .background(chatTint.theirs, RoundedCornerShape(20.dp))
             .padding(16.dp),
         verticalArrangement = Arrangement.spacedBy(12.dp),
     ) {
@@ -1352,8 +1362,8 @@ private fun CardView(chat: Chat, message: Message, haptics: Haptics) {
                                 .heightIn(max = 220.dp)
                                 .verticalScroll(rememberScrollState())
                                 .background(
-                                    secondaryTint.copy(alpha = 0.08f),
-                                    RoundedCornerShape(10.dp),
+                                    chatTint.inset,
+                                    RoundedCornerShape(12.dp),
                                 )
                                 .padding(10.dp),
                         )
@@ -1403,9 +1413,9 @@ private fun CardView(chat: Chat, message: Message, haptics: Haptics) {
                         // weight, so the most sensible action on the most
                         // sensitive screen is not the same shape as the refusal.
                         colors = if (refusal) {
-                            ButtonDefaults.filledTonalButtonColors()
+                            ButtonDefaults.filledTonalButtonColors(containerColor = chatTint.inset, contentColor = chatTint.ink)
                         } else {
-                            ButtonDefaults.buttonColors()
+                            ButtonDefaults.buttonColors(containerColor = chatTint.ink, contentColor = chatTint.actionText)
                         },
                     ) {
                         Text(option)
@@ -1518,7 +1528,7 @@ private fun ScreenShot(threadId: String, message: Message) {
     var attempt by remember(message.id) { mutableStateOf(0) }
     var state by remember(message.id) { mutableStateOf<ScreenShotState>(ScreenShotState.Loading) }
 
-    BoxWithConstraints(modifier = Modifier.fillMaxWidth()) {
+    BoxWithConstraints(modifier = Modifier.fillMaxWidth(0.92f)) {
         val renderedWidthPixels = with(LocalDensity.current) { maxWidth.toPx().toInt().coerceAtLeast(1) }
         LaunchedEffect(threadId, message.id, attempt, renderedWidthPixels) {
             state = ScreenShotState.Loading
@@ -1548,8 +1558,9 @@ private fun ScreenShot(threadId: String, message: Message) {
             modifier = Modifier
                 .fillMaxWidth()
                 .aspectRatio(aspectRatio)
-                .clip(RoundedCornerShape(16.dp))
-                .background(secondaryTint.copy(alpha = 0.13f)),
+                .clip(RoundedCornerShape(20.dp))
+                .background(chatTint.theirs)
+                .padding(4.dp),
             contentAlignment = Alignment.Center,
         ) {
             when (val current = state) {
@@ -1572,7 +1583,7 @@ private fun ScreenShot(threadId: String, message: Message) {
                     bitmap = current.image,
                     contentDescription = stringResource(R.string.mobile_a_frame_of_this_bot_s_computer_39b6a5bb),
                     contentScale = ContentScale.Fit,
-                    modifier = Modifier.fillMaxSize(),
+                    modifier = Modifier.fillMaxSize().clip(RoundedCornerShape(12.dp)),
                 )
             }
         }
@@ -1596,31 +1607,26 @@ private sealed interface ScreenShotState {
  */
 @Composable
 fun StreamingBubble(text: String?, reasoning: String?) {
-    Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.Bottom) {
-        Column(
-            modifier = Modifier
-                .weight(1f, fill = false)
-                .padding(bottom = SpeechBubble.tailDrop())
-                .background(BubbleColor.theirs, SpeechBubbleShape.of(BubbleTail.LEADING))
-                .padding(horizontal = 15.dp, vertical = 11.dp),
-            verticalArrangement = Arrangement.spacedBy(4.dp),
-        ) {
-            if (!reasoning.isNullOrEmpty() && text.isNullOrEmpty()) {
-                // Folded away by default, because reasoning is not the answer.
-                // Tail-limited: it runs to thousands of words and the part worth
-                // reading is always the end. Plain lines, unlike the answer: the
-                // tail cut lands wherever it lands, and rendering markdown that
-                // starts mid-syntax invents structure the model did not write.
-                ThoughtChamber(reasoning = reasoning)
+    val paced = rememberPacedText(text.orEmpty(), streamOpen = !text.isNullOrEmpty())
+    val recordVisible = LocalLiveTextVisibility.current
+    DisposableEffect(recordVisible) { onDispose { recordVisible(false) } }
+    val markdown = remember { Markdown.Incremental() }
+    val revealEnd = remember(text, paced.visible) {
+        StreamingText.revealedEnd(text.orEmpty(), paced.visible.length, final = false)
+    }
+    val hasVisibleText = remember(text, revealEnd) { (0 until revealEnd).any { !text.orEmpty()[it].isWhitespace() } }
+    SideEffect { recordVisible(hasVisibleText) }
+    val blocks = remember(text, revealEnd) { markdown.blocks(text.orEmpty(), revealEnd, closePartial = true) }
+    val hasTable = blocks.any { it is MarkdownBlock.Table }
+    Column(Modifier.fillMaxWidth().testTag("streaming-bubble").semantics { pacedText(paced) }) {
+        if (!reasoning.isNullOrEmpty()) ThinkingView(reasoning, answering = !text.isNullOrEmpty())
+        if (!text.isNullOrEmpty()) Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.Bottom) {
+            Column(Modifier.weight(1f, fill = false).widthIn(max = 640.dp).padding(bottom = SpeechBubble.tailDrop())
+                .background(chatTint.theirs, SpeechBubbleShape.of(BubbleTail.LEADING)).padding(horizontal = 14.dp, vertical = 9.dp)) {
+                MarkdownBlocks(blocks, caret = true, settling = paced.revealing && paced.motion, caretAlpha = paced.caretOpacity)
             }
-            if (!text.isNullOrEmpty()) {
-                // Same renderer as the settled bubble: a live reply showing
-                // `**bold**` that snaps to bold on arrival is the message
-                // jumping, just in a different dimension.
-                MarkdownText(source = text, caret = true)
-            }
+            Spacer(Modifier.fillMaxWidth(if (hasTable) 0.08f else 0.20f))
         }
-        Spacer(Modifier.width(44.dp))
     }
 }
 
@@ -1638,10 +1644,10 @@ fun StreamingBubble(text: String?, reasoning: String?) {
  *
  * Drawn in the same bubble, padding and tail as the reply that will replace it,
  * one line of text high, so the handover is the text arriving rather than the
- * shape changing. The dots are the bubble's quiet foreground, as on iOS.
+ * shape changing. The dots take the bot's ink, like the rest of its chat.
  */
 @Composable
-fun WorkingBubble(name: String) {
+fun WorkingBubble(name: String, color: String) {
     val clock = remember { MausFrameClock() }
     // Android says "reduce motion" through the animator duration scale, and this
     // reads it the way MausAvatar does — through a snapshotFlow, so turning the
@@ -1659,14 +1665,14 @@ fun WorkingBubble(name: String) {
             }
     }
 
-    val dots = secondaryTint
+    val dots = conversationTint(color).ink
     val label = stringResource(R.string.mobile_chat_typing, name)
     Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.Bottom) {
         Box(
             modifier = Modifier
                 .padding(bottom = SpeechBubble.tailDrop())
                 .background(BubbleColor.theirs, SpeechBubbleShape.of(BubbleTail.LEADING))
-                .padding(horizontal = 15.dp, vertical = 11.dp)
+                .padding(horizontal = 14.dp, vertical = 9.dp)
                 .semantics {
                     contentDescription = label
                     liveRegion = LiveRegionMode.Polite

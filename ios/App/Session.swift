@@ -51,7 +51,37 @@ final class Session: ObservableObject {
         case offline(String)
     }
 
-    @Published private(set) var state = CompanionState()
+    /// The folded fleet. Published by hand rather than with `@Published`, so a
+    /// delivery that only carries reply tokens can skip it: those change
+    /// `streaming` and `reasoning` and nothing else, arrive up to twenty times
+    /// a second per busy bot, and used to rebuild every observing view (the
+    /// home list under an open chat included) on each one. Token text reaches
+    /// the screen through `liveText` instead, whose per-thread objects only
+    /// the views showing that thread's live reply observe.
+    private(set) var state = CompanionState() {
+        willSet { if !quietStreamUpdate { objectWillChange.send() } }
+        didSet {
+            liveText.sync(streaming: state.streaming, reasoning: state.reasoning)
+            if !quietStreamUpdate {
+                stateVersion &+= 1
+                stateSubject.send(state)
+            }
+        }
+    }
+    /// Bumped with every published change of `state`: views memoize work
+    /// derived from the whole fleet (home summaries, Updates) against it.
+    private(set) var stateVersion = 0
+    /// `$state` as it was: the current value on subscribe, then every
+    /// published change.
+    var statePublisher: AnyPublisher<CompanionState, Never> { stateSubject.eraseToAnyPublisher() }
+    private let stateSubject = CurrentValueSubject<CompanionState, Never>(CompanionState())
+    private var quietStreamUpdate = false
+    /// Reply and reasoning text as it streams, per thread (see `state`).
+    let liveText = LiveTextStore()
+    /// One thread's live text, seeded with what has already streamed.
+    func liveText(for threadId: String) -> LiveText {
+        liveText.thread(threadId, streaming: state.streaming[threadId], reasoning: state.reasoning[threadId])
+    }
     @Published private(set) var connection: Connection?
     @Published private(set) var connections: [Connection] = []
     let threadSelection = BotThreadSelection()
@@ -206,7 +236,7 @@ final class Session: ObservableObject {
         let arguments = ProcessInfo.processInfo.arguments
         if (arguments.contains("-store-preview") || arguments.contains("-computer-switcher-preview")),
            let url = Bundle.main.url(
-               forResource: arguments.contains("-images-preview") ? "ImagePreview" : arguments.contains("-approval-preview") ? "ApprovalPreview" : arguments.contains("-chat-update-preview") ? "ChatUpdatePreview" : arguments.contains("-chat-presentation-preview") ? "ChatPresentationPreview" : arguments.contains("-roster-preview") ? "RosterPreview" : arguments.contains("-threads-preview") ? "ThreadPreview" : "StorePreview",
+               forResource: arguments.contains("-images-preview") ? "ImagePreview" : arguments.contains("-approval-preview") ? "ApprovalPreview" : arguments.contains("-chat-showcase-preview") ? "ChatShowcasePreview" : arguments.contains("-chat-update-preview") ? "ChatUpdatePreview" : arguments.contains("-chat-presentation-preview") ? "ChatPresentationPreview" : arguments.contains("-roster-preview") ? "RosterPreview" : arguments.contains("-threads-preview") ? "ThreadPreview" : "StorePreview",
                withExtension: "json"
            ),
            let data = try? Data(contentsOf: url),
@@ -262,6 +292,17 @@ final class Session: ObservableObject {
                 }
             }
             var fleet = fleet
+            if arguments.contains("-chat-showcase-preview"),
+               let flag = arguments.firstIndex(of: "-chat-showcase-component"), flag + 1 < arguments.count,
+               let pepper = fleet.bots.firstIndex(where: { $0.id == "preview-pepper" }),
+               let component = fleet.bots[pepper].messages?.first(where: { $0.id == "showcase-component-\(arguments[flag + 1])" }) {
+                // Alternate branches are native cards, not another UI or a
+                // transport mock. The ordinary showcase still ends at approval.
+                fleet.bots[pepper].messages = fleet.bots[pepper].messages?.filter {
+                    $0.id == "showcase-ask" || $0.id == component.id
+                }
+                fleet.bots[pepper].activeLeafId = component.id
+            }
             if arguments.contains("-live-call-long-name-preview"),
                let pepper = fleet.bots.firstIndex(where: { $0.id == "preview-pepper" }) {
                 // Forty characters, too long for the call bar's line: the
@@ -340,11 +381,35 @@ final class Session: ObservableObject {
                 digest.text = "[digest] · tools: shell ×2 · reply: Digest must stay hidden"
                 state.apply(.message(threadId: "preview-gmail", message: digest))
             }
+            if arguments.contains("-chat-showcase-preview"),
+               (arguments.contains("-chat-showcase-busy-preview") || arguments.contains("-chat-reasoning-preview")),
+               let index = state.bots.firstIndex(where: { $0.id == "preview-pepper" }) {
+                state.bots[index].busy = true
+                if let task = state.bots[index].tasks?.firstIndex(where: { $0.threadId == "preview-gmail" }) {
+                    state.bots[index].tasks?[task].busy = true
+                    state.bots[index].tasks?[task].activity = "working"
+                }
+                if arguments.contains("-chat-showcase-busy-preview") {
+                    let preview = #"""
+                    [
+                      {"id":"showcase-live-ask","parentId":"showcase-approval","role":"user","kind":"text","at":1791276150000,"text":"Can you find a rain-friendly version, just in case?"},
+                      {"id":"showcase-live-narration","parentId":"showcase-live-ask","role":"bot","kind":"text","at":1791276151000,"text":"I’m finding a cosy backup for us.","turnId":"showcase-live-turn"},
+                      {"id":"showcase-live-plan","parentId":"showcase-live-narration","role":"bot","kind":"activity","at":1791276152000,"turnId":"showcase-live-turn","tool":{"name":"TodoWrite","summary":"Building a rain-friendly Saturday","ok":true,"input":"{\"todos\":[{\"content\":\"Check the forecast\",\"status\":\"completed\"},{\"content\":\"Find somewhere indoors\",\"activeForm\":\"Finding a cosy indoor spot\",\"status\":\"in_progress\"},{\"content\":\"Save a backup route\",\"status\":\"pending\"}]}"}}
+                    ]
+                    """#
+                    if let messages = try? JSONDecoder().decode([Message].self, from: Data(preview.utf8)) {
+                        for message in messages { state.apply(.message(threadId: "preview-gmail", message: message)) }
+                    }
+                }
+            }
             if arguments.contains("-chat-reasoning-preview"),
                let frameURL = Bundle.main.url(forResource: "ChatReasoningPreview", withExtension: "json"),
                let frameData = try? Data(contentsOf: frameURL),
                let frame = try? JSONDecoder().decode(Frame.self, from: frameData) {
                 state.apply(frame)
+            }
+            if arguments.contains("-chat-answer-preview") {
+                state.streaming["preview-gmail"] = "Here’s what I found so far."
             }
             if arguments.contains("-threads-preview"),
                let pagesURL = Bundle.main.url(forResource: "ThreadPreviewPages", withExtension: "json"),
@@ -357,7 +422,11 @@ final class Session: ObservableObject {
                 // earlier run on the same simulator may have saved a choice.
                 UserDefaults.standard.removeObject(forKey: PrefKey.rosterDensity)
             }
+            if arguments.contains("-reset-work-summaries") {
+                UserDefaults.standard.removeObject(forKey: PrefKey.showWorkSummaries)
+            }
             if arguments.contains("-busy-fleet-preview") { startBusyFleetPreview() }
+            if arguments.contains("-chat-stream-preview") { startStreamPreview() }
             status = .live
             return
         }
@@ -445,6 +514,140 @@ final class Session: ObservableObject {
                     self.applyStreamBatch(batch)
                 }
             } catch { /* offline fixture cancellation */ }
+        }
+    }
+
+    /// One live turn in the showcase thread, played through the same store
+    /// folds a paired computer's stream goes through: a send, typing,
+    /// reasoning, a plan ticking off, steps, a bursty answer stream (uneven
+    /// chunks at uneven gaps, the way network batches arrive), the settled
+    /// reply and its digest. For recording and judging motion offline.
+    private func startStreamPreview() {
+        let thread = "preview-gmail"
+        guard state.bots.contains(where: { $0.threadId == thread }) else { return }
+        // The showcase ends on a pending approval; answered, the attention
+        // island stays down and the turn reads as the next thing that happens.
+        if var card = state.messages[thread]?.first(where: { $0.id == "showcase-approval" }) {
+            card.card?.answered = "Allow"
+            state.apply(.messagePatch(threadId: thread, message: card))
+        }
+        streamTask = Task { @MainActor [weak self] in
+            let reply = """
+            Found three cosy dinner spots near the river:
+
+            - **Linden & Salt**: small plates and candlelight; it books out after seven.
+            - **The Ferry House**: a wood fire and a view of the water.
+            - **Nonna’s Kitchen**: handmade pasta, walk-ins only.
+
+            | Place | Walk | Price |
+            | --- | --- | --- |
+            | Linden & Salt | 6 min | ££ |
+            | The Ferry House | 11 min | £££ |
+            | Nonna’s Kitchen | 4 min | £ |
+
+            Shall I hold a table at Linden & Salt for 7:30?
+            """
+            let reasoning = "The walk back from the bookshop ends near the river, so dinner should be close to it. "
+                + "They liked quiet places at lunch; candlelit and small beats loud and big. "
+                + "I’ll check which ones take bookings tonight."
+            let turn = "stream-preview-turn"
+            var at = 1_791_276_140_000.0
+            var leaf = "showcase-approval"
+            var seed: UInt64 = 0x5EED
+            func random(_ range: ClosedRange<Int>) -> Int {
+                seed = seed &* 6364136223846793005 &+ 1442695040888963407
+                return range.lowerBound + Int((seed >> 33) % UInt64(range.count))
+            }
+            func message(_ fields: [String: Any], chain: Bool = true) -> Message? {
+                var fields = fields
+                at += 1000
+                fields["at"] = at
+                if chain, fields["parentId"] == nil { fields["parentId"] = leaf }
+                guard let data = try? JSONSerialization.data(withJSONObject: fields),
+                      let decoded = try? JSONDecoder().decode(Message.self, from: data) else { return nil }
+                if chain { leaf = decoded.id }
+                return decoded
+            }
+            func plan(_ statuses: [String]) -> String {
+                let items = [("Check the walk back", "Checking the walk back"),
+                             ("Find dinner near the river", "Finding dinner near the river"),
+                             ("Compare tables for tonight", "Comparing tables for tonight")]
+                let todos = zip(items, statuses).map { ["content": $0.0.0, "activeForm": $0.0.1, "status": $0.1] }
+                let data = (try? JSONSerialization.data(withJSONObject: ["todos": todos], options: [.prettyPrinted])) ?? Data()
+                return String(decoding: data, as: UTF8.self)
+            }
+            func pause(_ milliseconds: Int) async -> Bool {
+                (try? await Task.sleep(nanoseconds: UInt64(milliseconds) * 1_000_000)) != nil
+            }
+            @MainActor func apply(_ frame: Frame?) {
+                guard let self, let frame else { return }
+                self.state.apply(frame)
+            }
+            @MainActor func post(_ fields: [String: Any], chain: Bool = true) -> Message? {
+                let built = message(fields, chain: chain)
+                if let built { apply(.message(threadId: thread, message: built)) }
+                return built
+            }
+            @MainActor func patch(_ original: Message?, _ change: (inout Message) -> Void) {
+                guard var copy = original else { return }
+                change(&copy)
+                apply(.messagePatch(threadId: thread, message: copy))
+            }
+            @MainActor func delta(_ text: String, kind: String) {
+                let fields: [String: Any] = ["type": "content.delta", "threadId": thread, "delta": text, "streamKind": kind]
+                guard let data = try? JSONSerialization.data(withJSONObject: fields),
+                      let event = try? JSONDecoder().decode(RuntimeEvent.self, from: data) else { return }
+                apply(.runtime(event))
+            }
+            @MainActor func stream(_ text: String, kind: String, sizes: ClosedRange<Int>, gaps: ClosedRange<Int>) async -> Bool {
+                var rest = Substring(text)
+                while !rest.isEmpty {
+                    let chunk = rest.prefix(random(sizes))
+                    rest = rest.dropFirst(chunk.count)
+                    delta(String(chunk), kind: kind)
+                    guard await pause(random(gaps)) else { return false }
+                }
+                return true
+            }
+            @MainActor func busy(_ value: Bool) {
+                guard let self, let index = self.state.bots.firstIndex(where: { $0.threadId == thread }) else { return }
+                self.state.bots[index].busy = value
+                if let task = self.state.bots[index].tasks?.firstIndex(where: { $0.threadId == thread }) {
+                    self.state.bots[index].tasks?[task].busy = value
+                    self.state.bots[index].tasks?[task].activity = value ? "working" : nil
+                }
+            }
+
+            guard await pause(1800) else { return }
+            _ = post(["id": "stream-ask", "role": "user", "kind": "text", "text": "Could you find somewhere cosy for dinner too?"])
+            guard await pause(500) else { return }
+            busy(true)
+            guard await pause(900), await stream(reasoning, kind: "reasoning_text", sizes: 4...16, gaps: 30...90) else { return }
+            guard await stream("Let me look along the river.", kind: "assistant_text", sizes: 3...9, gaps: 40...110) else { return }
+            _ = post(["id": "stream-narration", "role": "bot", "kind": "text", "text": "Let me look along the river.", "turnId": turn])
+            guard await pause(500) else { return }
+            let planned = post(["id": "stream-plan", "role": "bot", "kind": "activity", "turnId": turn,
+                                "tool": ["name": "TodoWrite", "ok": true, "input": plan(["in_progress", "pending", "pending"])]])
+            guard await pause(900) else { return }
+            let search = post(["id": "stream-search", "role": "bot", "kind": "activity", "turnId": turn,
+                               "tool": ["name": "web_search", "summary": "Dinner near the river, open tonight"]])
+            guard await pause(1100) else { return }
+            patch(search) { $0.tool?.ok = true }
+            patch(planned) { $0.tool?.input = plan(["completed", "in_progress", "pending"]) }
+            guard await pause(900) else { return }
+            _ = post(["id": "stream-read", "role": "bot", "kind": "activity", "turnId": turn,
+                      "tool": ["name": "read", "ok": true, "summary": "notes/places-we-liked.md"]])
+            guard await pause(800) else { return }
+            patch(planned) { $0.tool?.input = plan(["completed", "completed", "in_progress"]) }
+            guard await pause(1000) else { return }
+            patch(planned) { $0.tool?.input = plan(["completed", "completed", "completed"]) }
+            guard await pause(700), await stream(reply, kind: "assistant_text", sizes: 2...22, gaps: 35...140) else { return }
+            guard await pause(250) else { return }
+            _ = post(["id": "stream-reply", "role": "bot", "kind": "text", "text": reply, "turnId": turn,
+                      "turnTerminal": true, "turnSucceeded": true])
+            busy(false)
+            _ = post(["id": "stream-digest", "role": "bot", "kind": "digest", "turnId": turn, "turnSucceeded": true,
+                      "text": "[digest] · tools: TodoWrite ×4, web_search ×1, read ×1 · reply: Found three cosy dinner spots near the river:"])
         }
     }
 #endif
@@ -1107,7 +1310,17 @@ final class Session: ObservableObject {
     private func applyStreamBatch(_ batch: [StreamFrame]) {
         var updated = state
         updated.applyBatch(batch)
+        // Only reply/reasoning tokens (and the cursor they advance): fold them
+        // without publishing `state`. `liveText` carries the text to the one
+        // bubble showing it; nothing else on screen depends on these fields.
+        let tokensOnly = batch.allSatisfy { frame in
+            if case let .runtime(event) = frame.frame { return event.type == "content.delta" }
+            return false
+        }
+        quietStreamUpdate = tokensOnly
         state = updated
+        quietStreamUpdate = false
+        if tokensOnly { return }
         for frame in batch {
             if case let .runtime(event) = frame.frame,
                ["turn.completed", "runtime.error", "request.opened", "request.resolved", "item.completed"].contains(event.type) {

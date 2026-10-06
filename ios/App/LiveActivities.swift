@@ -60,7 +60,7 @@ final class LiveActivityCoordinator {
         }
         // Do not debounce indefinitely while another bot is streaming.
         // The first window also lets cold-launch hydration settle.
-        cancellable = session.$state
+        cancellable = session.statePublisher
             .collect(.byTime(DispatchQueue.main, .milliseconds(400)))
             .compactMap(\.last)
             .sink { [weak self] state in self?.sync(state) }

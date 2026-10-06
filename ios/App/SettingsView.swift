@@ -8,6 +8,7 @@ struct SettingsView: View {
     @EnvironmentObject private var session: Session
     @State private var enablingNotifications = false
     @AppStorage(PrefKey.activityDetail) private var activityDetail = ActivityDetail.phoneDefault.rawValue
+    @AppStorage(PrefKey.showWorkSummaries) private var showWorkSummaries = false
     @AppStorage(PrefKey.islandIntro) private var islandIntro = IslandIntro.oncePerBot.rawValue
     @AppStorage(PrefKey.language) private var language = AppLanguage.system.rawValue
     @AppStorage(PrefKey.rosterDensity) private var rosterDensity = RosterDensity.default.rawValue
@@ -77,6 +78,20 @@ struct SettingsView: View {
                         SettingsIcon(symbol: "wrench.and.screwdriver.fill", color: .purple)
                     }
                 }
+
+                Toggle(isOn: $showWorkSummaries) {
+                    Label {
+                        VStack(alignment: .leading, spacing: 4) {
+                            Text("Work summaries")
+                            Text("Show what each reply did under it. Always shown when a step failed.")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        }
+                    } icon: {
+                        SettingsIcon(symbol: "checklist", color: .blue)
+                    }
+                }
+                .accessibilityIdentifier("work-summaries-toggle")
 
                 Picker(selection: $islandIntro) {
                     ForEach(IslandIntro.allCases, id: \.rawValue) { option in

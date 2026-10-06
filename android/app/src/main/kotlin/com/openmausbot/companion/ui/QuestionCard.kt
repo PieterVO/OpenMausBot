@@ -145,15 +145,8 @@ internal fun QuestionCardView(chat: Chat, message: Message, haptics: Haptics) {
 
     Column(
         modifier = Modifier
-            .fillMaxWidth()
-            .background(secondaryTint.copy(alpha = 0.13f), RoundedCornerShape(22.dp))
-            .then(
-                if (settled) {
-                    Modifier
-                } else {
-                    Modifier.border(1.5.dp, MaterialTheme.colorScheme.primary, RoundedCornerShape(22.dp))
-                },
-            )
+            .fillMaxWidth(0.92f)
+            .background(chatTint.theirs, RoundedCornerShape(20.dp))
             .padding(16.dp),
         verticalArrangement = Arrangement.spacedBy(12.dp),
     ) {
@@ -248,7 +241,7 @@ internal fun QuestionCardView(chat: Chat, message: Message, haptics: Haptics) {
         Column(
             modifier = Modifier
                 .fillMaxWidth()
-                .background(secondaryTint.copy(alpha = 0.10f), RoundedCornerShape(14.dp)),
+                .background(chatTint.inset, RoundedCornerShape(12.dp)),
         ) {
             current.options.forEachIndexed { position, option ->
                 if (position > 0) HorizontalDivider()
@@ -294,6 +287,7 @@ internal fun QuestionCardView(chat: Chat, message: Message, haptics: Haptics) {
             onClick = ::send,
             enabled = complete && !answering,
             modifier = Modifier.fillMaxWidth(),
+            colors = androidx.compose.material3.ButtonDefaults.buttonColors(containerColor = chatTint.ink, contentColor = chatTint.actionText),
         ) {
             Text(if (questions.size > 1) stringResource(R.string.mobile_submit_answers_988c4130) else stringResource(R.string.mobile_submit_answer_bf80bc31))
         }
@@ -350,7 +344,7 @@ internal object QuestionCardRules {
  */
 @Composable
 private fun Marker(checked: Boolean, multi: Boolean) {
-    val accent = MaterialTheme.colorScheme.primary
+    val accent = chatTint.ink
     val shape = if (multi) RoundedCornerShape(5.dp) else CircleShape
     Box(
         modifier = Modifier
@@ -369,14 +363,14 @@ private fun Marker(checked: Boolean, multi: Boolean) {
             Icon(
                 imageVector = Icons.Filled.Check,
                 contentDescription = null,
-                tint = MaterialTheme.colorScheme.onPrimary,
+                tint = chatTint.actionText,
                 modifier = Modifier.size(14.dp),
             )
         } else {
             Box(
                 modifier = Modifier
                     .size(8.dp)
-                    .background(MaterialTheme.colorScheme.onPrimary, CircleShape),
+                    .background(chatTint.actionText, CircleShape),
             )
         }
     }

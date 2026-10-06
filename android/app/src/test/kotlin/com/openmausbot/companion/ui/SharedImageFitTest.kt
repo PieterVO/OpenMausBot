@@ -102,8 +102,9 @@ class SharedImageFitTest {
         val density = compose.activity.resources.displayMetrics.density
         val frames = compose.onAllNodesWithTag(SHARED_IMAGE_FRAME_TAG, useUnmergedTree = true).fetchSemanticsNodes()
         assertEquals(shapes.size, frames.size)
-        // 393 dp less the 16 dp margins, the bot side's 44 dp gutter and the bubble's 15 dp padding.
-        val bubble = 393f - 32f - 44f - 30f
+        // 393 dp less the 16 dp margins, the bot side's gutter (a fifth of the
+        // row) and the bubble's 14 dp padding.
+        val bubble = (393f - 32f) * 0.8f - 28f
         frames.zip(shapes).forEach { (node, shape) ->
             val (w, h) = shape
             // Laid-out size, not the on-screen bounds: the tall ones run below the window.

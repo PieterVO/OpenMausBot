@@ -12,6 +12,7 @@ enum PrefKey {
     static let islandIntro = "companion.prefs.islandIntro"
     static let islandSeen = "companion.prefs.islandSeen"
     static let activityDetail = "companion.prefs.activityDetail"
+    static let showWorkSummaries = "companion.prefs.showWorkSummaries"
     static let quickReplies = "companion.prefs.quickReplies"
     static let language = "companion.prefs.language"
     /// Per device, like the desktop's sidebar density: a phone and a laptop

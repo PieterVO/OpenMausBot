@@ -20,6 +20,8 @@ struct RoutineRunCardView: View {
     var openRun: (() -> Void)? = nil
 
     @State private var expanded = false
+    @Environment(\.botTintColor) private var color
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     /// Six lines at phone width is about this much. Counting characters is
     /// cruder than measuring, but a report either clearly fits or clearly
@@ -63,7 +65,7 @@ struct RoutineRunCardView: View {
 
             if let summary {
                 Text(verbatim: summary)
-                    .font(.system(size: 15))
+                    .font(.body)
                     .foregroundStyle(.primary)
                     .lineLimit(expanded ? nil : Self.collapsedLines)
                     .frame(maxWidth: .infinity, alignment: .leading)
@@ -71,10 +73,11 @@ struct RoutineRunCardView: View {
                 if isLong {
                     Button(expanded ? "Show less" : "Show report") {
                         Haptics.selection()
-                        withAnimation(.snappy) { expanded.toggle() }
+                        withAnimation(reduceMotion ? .easeOut(duration: 0.2) : .spring(response: 0.38, dampingFraction: 0.82)) { expanded.toggle() }
                     }
-                    .font(.system(size: 13, weight: .semibold))
+                    .font(.subheadline.weight(.semibold))
                     .foregroundStyle(tint)
+                    .frame(minHeight: 44)
                     .buttonStyle(.plain)
                 }
             }
@@ -86,13 +89,13 @@ struct RoutineRunCardView: View {
                 } icon: {
                     Image(systemName: "exclamationmark.triangle.fill")
                 }
-                .font(.system(size: 13))
+                .font(.subheadline)
                 .foregroundStyle(.red)
                 .padding(.horizontal, 10)
                 .padding(.vertical, 6)
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .background(
-                    RoundedRectangle(cornerRadius: 10, style: .continuous).fill(Color.red.opacity(0.10))
+                    RoundedRectangle(cornerRadius: 12, style: .continuous).fill(Color.red.opacity(0.10))
                 )
             }
 
@@ -104,10 +107,13 @@ struct RoutineRunCardView: View {
                     HStack(spacing: 4) {
                         Text(actionLabel)
                         Image(systemName: "arrow.right")
-                            .font(.system(size: 11, weight: .semibold))
+                            .font(.caption.weight(.semibold))
                     }
-                    .font(.system(size: 13, weight: .semibold))
-                    .foregroundStyle(card.goalStatus == "needs-input" ? Color.orange : tint)
+                    .font(.subheadline.weight(.semibold))
+                    .foregroundStyle(BotTint.actionLabel(color))
+                    .padding(.horizontal, 14).padding(.vertical, 10)
+                    .frame(minHeight: 44)
+                    .background(tint, in: Capsule())
                 }
                 .buttonStyle(.plain)
                 .accessibilityLabel("\(actionLabel) for \(card.routineName)")
@@ -116,7 +122,7 @@ struct RoutineRunCardView: View {
         .padding(14)
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(
-            RoundedRectangle(cornerRadius: 22, style: .continuous).fill(Color.secondary.opacity(0.10))
+            RoundedRectangle(cornerRadius: 20, style: .continuous).fill(BotTint.theirs(color))
         )
         .accessibilityElement(children: .contain)
     }
@@ -125,10 +131,10 @@ struct RoutineRunCardView: View {
         VStack(alignment: .leading, spacing: 2) {
             HStack(alignment: .firstTextBaseline, spacing: 8) {
                 Image(systemName: "clock.arrow.circlepath")
-                    .font(.system(size: 12, weight: .semibold))
-                    .foregroundStyle(.secondary)
+                    .font(.subheadline.weight(.semibold))
+                    .foregroundStyle(tint)
                 Text(card.routineName.isEmpty ? "Routine" : card.routineName)
-                    .font(.system(size: 15, weight: .semibold))
+                    .font(.body.weight(.semibold))
                     .lineLimit(1)
                 Spacer(minLength: 4)
                 HStack(spacing: 4) {
@@ -137,12 +143,12 @@ struct RoutineRunCardView: View {
                     }
                     Text(card.stateLabel)
                 }
-                .font(.system(size: 12, weight: .semibold))
+                .font(.caption.weight(.semibold))
                 .foregroundStyle(toneColor)
                 .accessibilityElement(children: .combine)
             }
             Text(scheduled, format: .dateTime.weekday(.abbreviated).month(.abbreviated).day().hour().minute())
-                .font(.system(size: 12))
+                .font(.caption).monospacedDigit()
                 .foregroundStyle(.secondary)
         }
         .accessibilityElement(children: .combine)

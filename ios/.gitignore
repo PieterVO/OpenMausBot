@@ -10,3 +10,6 @@ App/OpenMausCompanion.entitlements
 ShareExtension/Info.plist
 ShareExtension/OpenMausShareExtension.entitlements
 Widgets/OpenMausCompanionWidgets.entitlements
+# A personal signing identity (team, bundle ids, App Group) for builds the
+# project's own team does not sign. See Config/Identity.xcconfig.
+Config/Identity.local.xcconfig

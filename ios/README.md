@@ -156,6 +156,36 @@ keys out of `project.yml` — `NSLocalNetworkUsageDescription` and
 `NSBonjourServices` especially. Without them `NWBrowser` returns no results at
 all, *silently*, which looks exactly like "no computers on this network".
 
+### On your own iPhone, with your own Apple account
+
+The bundle identifiers and App Group in `Config/Identity.xcconfig` belong to
+the project's Apple team; Apple will not sign them for anyone else. To put a
+build on your own phone (a free Personal Team works, App Groups included),
+create the untracked `ios/Config/Identity.local.xcconfig`:
+
+```
+OPENMAUS_APP_ID = com.yourname.mausbot
+OPENMAUS_APP_GROUP = group.com.yourname.mausbot
+DEVELOPMENT_TEAM = <your team id>
+CODE_SIGN_STYLE = Automatic
+```
+
+then, with the phone connected and Developer Mode on:
+
+```sh
+cd ios && xcodegen generate
+xcodebuild -project OpenMausCompanion.xcodeproj -scheme OpenMausCompanion \
+  -destination 'id=<device UDID from `xcrun devicectl list devices`>' \
+  -packageAuthorizationProvider netrc -allowProvisioningUpdates build
+xcrun devicectl device install app --device <UDID> \
+  ~/Library/Developer/Xcode/DerivedData/OpenMausCompanion-*/Build/Products/Debug-iphoneos/OpenMausCompanion.app
+```
+
+`-packageAuthorizationProvider netrc` keeps SwiftPM from waiting forever on a
+Keychain prompt while it fetches WebRTC. The first launch of a free-account
+build needs **Settings → General → VPN & Device Management → Trust**, and a
+free account's build expires after 7 days: rebuild and install again.
+
 ## Regenerating the fixtures
 
 Whenever the companion API changes:
