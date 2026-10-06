@@ -159,3 +159,11 @@ not establish physical-device pairing, live webhook delivery, or HTTPS behavior.
   review PNGs are regenerated at 1233 × 2673, including actual 1.3× font-scale
   dialog captures. Representative light/dark/RTL captures were inspected for
   surface edges, header occlusion, table copy/separators, and retained reasoning.
+- Table headings retain the Markdown's written case and semibold weight. The
+  header fill covers the complete table viewport; Copy overlays that row, with
+  its target space inside the final cell column rather than a separate rail.
+  For a table-only evidence refresh, set `COMPANION_CAPTURE_COMPONENT=table`
+  while running the showcase tests; their behaviour assertions still all run.
+  The final table-only run passed all 20 tests across `TableReadingOrderTest`,
+  `ParagraphDirectionTest`, and `ChatShowcaseScreenshotTest`, plus debug APK
+  assembly; only the light, dark, and large-type RTL table PNGs were refreshed.

@@ -69,7 +69,6 @@ import androidx.compose.ui.unit.sp
 import com.openmausbot.companion.R
 import com.openmausbot.companion.core.Reasoning
 import com.openmausbot.companion.core.TranscriptCard
-import java.util.Locale
 import kotlinx.coroutines.launch
 
 /** Native patch and table surfaces; copy and row-major accessibility stay unchanged. */
@@ -297,9 +296,9 @@ fun DataTableCard(card: TranscriptCard.Table, modifier: Modifier = Modifier) {
                 })
             },
     ) {
-        // Keep the fixed copy target out of the scrolling, selectable cells.
+        // Reserve the overlaid copy target inside the final column, not a separate rail.
         SelectionContainer {
-            Box(Modifier.fillMaxWidth().padding(end = MIN_TOUCH_TARGET).drawWithContent {
+            Box(Modifier.fillMaxWidth().drawWithContent {
                 drawContent()
                 if (scroll.canScrollForward) drawRect(
                     Brush.horizontalGradient(if (rtl) listOf(fadeSurface, Color.Transparent) else listOf(Color.Transparent, fadeSurface),
@@ -349,17 +348,17 @@ private fun DataGrid(
             // One additional inset over the container is subtly stronger, not
             // a doubled overlay compounded over an already tinted surface.
             Box(Modifier.background(chatTint.inset))
-            headers.forEach { header ->
+            headers.forEachIndexed { column, header ->
                 Text(
-                    // Uppercased by the invariant rules, like every other
-                    // section label in this app: a reader in `tr-TR` must still
-                    // read the column name, not a dotted capital.
-                    text = header.uppercase(Locale.ROOT),
+                    text = header,
                     style = MaterialTheme.typography.titleSmall.copy(fontFeatureSettings = "tnum"),
                     fontWeight = FontWeight.SemiBold,
                     color = MaterialTheme.colorScheme.onSurface,
                     softWrap = false,
-                    modifier = Modifier.padding(horizontal = 6.dp, vertical = 8.dp),
+                    modifier = Modifier
+                        .padding(end = if (column == headers.lastIndex) MIN_TOUCH_TARGET else 0.dp)
+                        .heightIn(min = MIN_TOUCH_TARGET)
+                        .padding(horizontal = 6.dp, vertical = 8.dp),
                 )
             }
             rows.forEach { row ->
@@ -372,7 +371,9 @@ private fun DataGrid(
                         text = row.getOrElse(column) { "" },
                         tail = false,
                         style = MaterialTheme.typography.bodyMedium.copy(fontFeatureSettings = "tnum"),
-                        modifier = Modifier.padding(horizontal = 6.dp, vertical = 8.dp),
+                        modifier = Modifier
+                            .padding(end = if (column == headers.lastIndex) MIN_TOUCH_TARGET else 0.dp)
+                            .padding(horizontal = 6.dp, vertical = 8.dp),
                     )
                 }
             }

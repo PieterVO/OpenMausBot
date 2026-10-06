@@ -109,7 +109,7 @@ class TableReadingOrderTest {
     fun `the tree reads by row, headings first, the way iOS does`() {
         assertEquals(
             listOf(
-                "LANGUAGE", "YEAR",
+                "language", "year",
                 "Python", "1991",
                 "Java", "1995",
                 "Rust", "2010",
@@ -127,7 +127,7 @@ class TableReadingOrderTest {
         )
         assertEquals(
             listOf(
-                "LANGUAGE", "YEAR",
+                "language", "year",
                 "Python", "1991",
                 "Java", "",
                 "Copy table as CSV",
@@ -191,9 +191,9 @@ class TableReadingOrderTest {
         fun left(text: String) = compose.onNodeWithText(text).fetchSemanticsNode().boundsInRoot.left
         fun top(text: String) = compose.onNodeWithText(text).fetchSemanticsNode().boundsInRoot.top
 
-        val first = left("LANGUAGE")
+        val first = left("language")
         listOf("Python", "Java", "Rust").forEach { assertEquals(first, left(it), 0.5f, it) }
-        val second = left("YEAR")
+        val second = left("year")
         listOf("1991", "1995", "2010").forEach { assertEquals(second, left(it), 0.5f, it) }
         assertTrue(second > first, "the second column has to sit to the right of the first")
 
@@ -213,11 +213,11 @@ class TableReadingOrderTest {
         compose.setContent { CompanionTheme(darkTheme = false) { DataTableCard(aligned) } }
 
         fun bounds(text: String) = compose.onNodeWithText(text).getBoundsInRoot()
-        assertEquals(bounds("COUNT").right.value, bounds("1").right.value, 0.5f, "trailing short cell")
-        assertEquals(bounds("COUNT").right.value, bounds("123456").right.value, 0.5f, "trailing wide cell")
+        assertEquals(bounds("count").right.value, bounds("1").right.value, 0.5f, "trailing short cell")
+        assertEquals(bounds("count").right.value, bounds("123456").right.value, 0.5f, "trailing wide cell")
         fun center(text: String) = bounds(text).let { (it.left.value + it.right.value) / 2f }
-        assertEquals(center("STATUS"), center("up"), 0.5f, "centered short cell")
-        assertEquals(center("STATUS"), center("ready"), 0.5f, "centered wider cell")
+        assertEquals(center("status"), center("up"), 0.5f, "centered short cell")
+        assertEquals(center("status"), center("ready"), 0.5f, "centered wider cell")
     }
 
     @Test
