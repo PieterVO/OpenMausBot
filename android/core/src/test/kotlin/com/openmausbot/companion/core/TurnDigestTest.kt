@@ -20,6 +20,7 @@ class TurnDigestTest {
             digest.sections,
         )
         assertEquals(5, digest.toolCalls)
+        assertEquals(1, digest.failedCalls)
         assertEquals("What I did · 5 tools", digest.chipLabel)
     }
 
@@ -79,5 +80,17 @@ class TurnDigestTest {
         assertEquals(emptyList(), TurnDigest.parse(null).sections)
         assertEquals(emptyList(), TurnDigest.parse("[digest]").sections)
         assertEquals(listOf(TurnDigest.Section(null, listOf("Bash ×2"))), TurnDigest.parse("[digest] Bash ×2").sections)
+    }
+
+    @Test
+    fun failureCountsComeOnlyFromToolItemSuffixes() {
+        val digest = TurnDigest.parse(
+            "[digest] · tools: shell ×3 (2 failed), edit ×2 (1 failed) +4 more (from tool previews) · " +
+                "files: changed note (9 failed) · reply: tools: reply ×10 (10 failed)",
+        )
+        assertEquals(3, digest.failedCalls)
+        assertEquals(5, digest.toolCalls)
+        assertEquals(0, TurnDigest.parse("[digest] · tools: shell ×1 (0 failed)").failedCalls)
+        assertEquals(0, TurnDigest.parse("[digest] · tools: shell ×1 (1 failed) extra").failedCalls)
     }
 }

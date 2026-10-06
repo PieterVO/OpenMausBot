@@ -784,4 +784,31 @@
     <string name="mobile_density_compact_caption">One line per bot. Bots with more than one active thread show how many; tap the number to list them.</string>
     <string name="mobile_mention_someone">Mention someone</string>
     <string name="mobile_mention_everyone">Everyone in this room</string>
+    <string name="mobile_chat_work_summaries">Work summaries</string>
+    <string name="mobile_chat_work_summaries_caption">Show what each reply did under it. Always shown when a step failed.</string>
+    <string name="mobile_chat_plan">Plan</string>
+    <string name="mobile_chat_all_done">All done</string>
+    <string name="mobile_chat_plan_progress">%1$d of %2$d</string>
+    <string name="mobile_chat_plan_show_all">Show all %1$d</string>
+    <string name="mobile_chat_plan_truncated">More items not shown</string>
+    <string name="mobile_chat_thinking">Thinking</string>
+    <string name="mobile_chat_thought_for">Thought for %1$ds</string>
+    <string name="mobile_chat_what_bot_did">What %1$s did</string>
+    <string name="mobile_chat_say_hi">Say hi to %1$s</string>
+    <string name="mobile_chat_done">Done</string>
+    <string name="mobile_chat_pending">To do</string>
+    <string name="mobile_chat_active">In progress</string>
+    <string name="mobile_chat_cancelled">Cancelled</string>
+    <string name="mobile_chat_worked_duration">Worked %1$s</string>
+    <string name="mobile_chat_turn_failed">Turn failed</string>
+    <string name="mobile_chat_tokens">%1$s tokens</string>
+    <string name="mobile_chat_plan_a11y">Plan, %1$d of %2$d done</string>
+    <string name="mobile_chat_preview_coverage">Based on tool previews; some activity may not be included.</string>
+    <string name="mobile_chat_item_a11y">%1$s, %2$s</string>
+    <plurals name="mobile_chat_tool_count"><item quantity="one">%d tool</item><item quantity="other">%d tools</item></plurals>
+    <plurals name="mobile_chat_file_count"><item quantity="one">%d file</item><item quantity="other">%d files</item></plurals>
+    <plurals name="mobile_chat_failed_count"><item quantity="one">%d failed step</item><item quantity="other">%d failed steps</item></plurals>
+    <plurals name="mobile_chat_memory_count"><item quantity="one">%d memory change</item><item quantity="other">%d memory changes</item></plurals>
+    <string name="mobile_chat_jump_latest">Jump to latest message</string>
+    <string name="mobile_chat_copy_table_csv">Copy table as CSV</string>
 </resources>

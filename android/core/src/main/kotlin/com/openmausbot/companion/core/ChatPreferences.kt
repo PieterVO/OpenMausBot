@@ -80,6 +80,7 @@ sealed interface TranscriptRow {
         is Single -> message.id == messageId
         is ActivityRun -> items.any { it.id == messageId }
         is AssistantTurn -> items.any { it.id == messageId }
+        is Plan -> messageId in messageIds
     }
 
     data class Single(val message: Message) : TranscriptRow {
@@ -115,6 +116,17 @@ sealed interface TranscriptRow {
             return "Worked for $duration"
         }
     }
+
+    data class Plan(
+        override val id: String,
+        val message: Message,
+        val plan: TodoPlan,
+        val messageIds: Set<String> = setOf(id.removePrefix("plan."), message.id),
+        override val at: Double = message.at,
+    ) : TranscriptRow {
+        override val head: Message get() = message
+        override val endAt: Double get() = message.at
+    }
 }
 
 /**
@@ -126,13 +138,15 @@ sealed interface TranscriptRow {
  * the raw last message made "Hidden" mean "hidden in one place".
  */
 fun rosterPreview(messages: List<Message>, detail: ActivityDetail): String =
-    // The digest chip follows every reply; the reply is what the row should say.
-    when (val last = transcriptRows(messages, detail).lastOrNull { it.kind != Message.Kind.DIGEST }) {
+    // Plans remain tool activity in previews, not the transcript's persistent card.
+    when (val last = foldedTranscriptRows(messages, detail, showSummaries = false, showPlans = false)
+        .lastOrNull { it.kind != Message.Kind.DIGEST }) {
         null -> ""
         is TranscriptRow.Single -> previewText(last.message)
         is TranscriptRow.ActivityRun ->
             "${if (last.running) "Running" else "Ran"} ${last.items.size} steps"
         is TranscriptRow.AssistantTurn -> last.label
+        is TranscriptRow.Plan -> previewText(last.message)
     }
 
 /** What a single message reads as in a roster row. */
@@ -160,13 +174,6 @@ internal fun previewText(message: Message): String = when (message.kind) {
 }
 
 /**
- * Rows the harness writes about a turn rather than in it: tool chips and, since
- * Phase 0, the digest and compaction receipts. Hidden together, because a reader
- * who turned activity off does not want the summary of exactly those calls either.
- * Port of `isActivityReceipt` in `ChatPreferences.swift`. A routine-run card is
- * not one: it is the run's result, and it stays whatever the setting.
- */
-/**
  * A status row the server writes while a turn runs ("notice: Qwen hit a rate
  * limit and is retrying"). Port of `isStatusNotice` in `ChatPreferences.swift`:
  * it tells the reader what the bot is doing, so it is never hidden or folded.
@@ -193,8 +200,10 @@ fun isFailedTurn(message: Message): Boolean =
 /** What the chip and the roster say: a failed turn's cause, or the step. */
 val ToolActivity.label: String get() = failedTurnCause(name) ?: name
 
+/** Plans tell the reader what the bot is doing; summaries have their own visibility rule. */
 fun isActivityReceipt(message: Message): Boolean = when (message.kind) {
-    Message.Kind.ACTIVITY, Message.Kind.DIGEST, Message.Kind.COMPACTION -> true
+    Message.Kind.ACTIVITY -> message.tool?.let { TodoPlan.parse(it) } == null
+    Message.Kind.COMPACTION -> true
     else -> false
 }
 
@@ -232,11 +241,42 @@ fun liveNarration(messages: List<Message>, busy: Boolean, detail: ActivityDetail
 }
 
 /**
- * Fold a transcript to the selected activity detail. Failed steps are never folded in reduced
- * mode; hidden mode removes tool activity, failed steps included, but never a status notice
- * or a failed turn ([isFailedTurn]).
+ * Fold tool steps to the selected detail without hiding plans or opted-in/problem summaries.
+ * Failed steps remain separate at Reduced; notices and failed turns survive every level.
  */
-fun transcriptRows(messages: List<Message>, detail: ActivityDetail): List<TranscriptRow> {
+fun transcriptRows(
+    messages: List<Message>,
+    detail: ActivityDetail,
+    showSummaries: Boolean = false,
+): List<TranscriptRow> = foldedTranscriptRows(messages, detail, showSummaries, showPlans = true)
+
+private fun foldedTranscriptRows(
+    messages: List<Message>,
+    detail: ActivityDetail,
+    showSummaries: Boolean,
+    showPlans: Boolean,
+): List<TranscriptRow> {
+    val plans = if (showPlans) planStates(messages) else emptyMap()
+    val planGroups = mutableMapOf<String, MutableList<Message>>()
+    var userGroup = "before-user"
+    for (message in messages) {
+        if (message.role == Message.Role.USER) userGroup = "user.${message.id}"
+        if (message.id !in plans) continue
+        val group = message.turnId?.takeIf { it.isNotEmpty() }?.let { "turn.$it" } ?: userGroup
+        planGroups.getOrPut(group) { mutableListOf() }.add(message)
+    }
+    val planRows = mutableMapOf<String, TranscriptRow.Plan>()
+    for (items in planGroups.values) {
+        val first = items.first()
+        val latest = items.last()
+        planRows[first.id] = TranscriptRow.Plan(
+            id = "plan.${first.id}",
+            message = latest,
+            plan = plans.getValue(latest.id),
+            messageIds = items.mapTo(mutableSetOf()) { it.id },
+            at = first.at,
+        )
+    }
     // Only a server completion marker makes narration foldable. Legacy and
     // unfinished turns stay visible, matching desktop and iOS.
     val narration = mutableMapOf<String, MutableList<Message>>()
@@ -271,17 +311,29 @@ fun transcriptRows(messages: List<Message>, detail: ActivityDetail): List<Transc
         }
 
         messages.forEach { message ->
-            // Match iOS: a receipt with no recorded work should not leave a
-            // chip or an empty row after every ordinary conversational reply.
-            if (message.kind == Message.Kind.DIGEST && TurnDigest.parse(message.text).sections.isEmpty()) return@forEach
+            if (message.id in plans) {
+                // Every plan-bearing activity breaks the step run, even a later update
+                // whose latest state is already carried by the group's first card.
+                flush()
+                planRows[message.id]?.let { add(it) }
+                return@forEach
+            }
+            if (message.kind == Message.Kind.DIGEST) {
+                if (shouldShowDigest(message, showSummaries)) {
+                    flush()
+                    add(TranscriptRow.Single(message))
+                }
+                return@forEach
+            }
             val turn = folds[message.id]
             if (turn != null) {
                 flush()
                 add(turn)
-            } else if (message.id in hiddenIds || (detail == ActivityDetail.HIDDEN && isActivityReceipt(message) && !isStatusNotice(message) && !isFailedTurn(message))) {
-                // The reversible turn fold owns narration; Hidden owns tools.
+            } else if (message.id in hiddenIds || (detail == ActivityDetail.HIDDEN &&
+                    (message.kind == Message.Kind.ACTIVITY || isActivityReceipt(message)) &&
+                    !isStatusNotice(message) && !isFailedTurn(message))) {
+                // The reversible turn fold owns narration; Hidden owns machinery.
             } else if (detail != ActivityDetail.REDUCED || message.kind != Message.Kind.ACTIVITY) {
-                // The digest lands here too: its own row, never a step in a run.
                 flush()
                 add(TranscriptRow.Single(message))
             } else if (message.tool?.ok == false || isStatusNotice(message)) {

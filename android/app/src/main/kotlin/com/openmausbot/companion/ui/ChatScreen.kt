@@ -12,6 +12,9 @@ import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.PickVisualMediaRequest
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.AnimatedContent
+import androidx.compose.animation.SizeTransform
+import androidx.compose.animation.togetherWith
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
@@ -63,8 +66,15 @@ import androidx.compose.material3.LocalTextStyle
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
+import androidx.compose.foundation.interaction.DragInteraction
+import androidx.compose.material3.Button
+import androidx.compose.material3.ButtonDefaults
+import androidx.compose.material.icons.filled.KeyboardArrowDown
+import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.CompositionLocalProvider
+import com.openmausbot.companion.core.digestsByTurn
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
@@ -84,6 +94,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.drawWithCache
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.compositeOver
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.input.key.Key
@@ -189,7 +200,9 @@ fun ChatScreen(
             // Resolve the owner without changing the task named by the destination.
             val resolved = (destination as? Destination.Thread)?.let { resolution.chat.target }
             LaunchedEffect(resolved) { if (resolved != null) onResolved(resolved) }
-            LoadedChat(resolution.chat, state, onBack, onOpenComputer, onOpenOverview, retainsDraft, onResolved, onOpenChat)
+            CompositionLocalProvider(LocalConversationTint provides conversationTint(resolution.chat.color)) {
+                LoadedChat(resolution.chat, state, onBack, onOpenComputer, onOpenOverview, retainsDraft, onResolved, onOpenChat)
+            }
         }
     }
 }
@@ -468,6 +481,12 @@ private fun LoadedChat(
 
     val rawTranscript = remember(state, threadId) { state.visibleTranscript(threadId) }
     val activityDetail by environment.chatPreferences.activityDetail.collectAsState()
+    val showSummaries by environment.chatPreferences.showWorkSummaries.collectAsState()
+    val digests = remember(rawTranscript) { digestsByTurn(rawTranscript) }
+    val terminalReplies = remember(rawTranscript) {
+        rawTranscript.filter { it.role == Message.Role.BOT && it.kind == Message.Kind.TEXT && it.turnId != null }
+            .groupBy { it.turnId }.mapValues { (_, messages) -> messages.last().id }.values.toSet()
+    }
     val quickReplies by environment.chatPreferences.quickReplies.collectAsState()
     // The source transcript stays intact for approvals, mascot state and
     // pagination. Only the rendered rows fold activity according to the local
@@ -477,12 +496,20 @@ private fun LoadedChat(
     val live = remember(rawTranscript, activityDetail, chat.busy) {
         liveNarration(rawTranscript, chat.busy, activityDetail)
     }
-    val transcript = remember(rawTranscript, activityDetail, live) {
+    val transcript = remember(rawTranscript, activityDetail, live, showSummaries) {
         transcriptRows(
             if (live.hiddenIds.isEmpty()) rawTranscript else rawTranscript.filterNot { it.id in live.hiddenIds },
             activityDetail,
+            showSummaries = showSummaries,
         )
     }
+    val arrivalTracker = remember(threadId) { TranscriptArrivals() }
+    remember(rawTranscript, state.hasLoadedPage(threadId)) {
+        if (rawTranscript.isNotEmpty() || state.hasLoadedPage(threadId)) arrivalTracker.update(rawTranscript.map { it.id }) else emptySet()
+    }
+    val latestUserAt = rawTranscript.lastOrNull { it.role == Message.Role.USER }?.at ?: Double.NEGATIVE_INFINITY
+    val livePlan = if (chat.busy) transcript.filterIsInstance<TranscriptRow.Plan>()
+        .lastOrNull { it.message.at > latestUserAt && !it.plan.isFinished } else null
     var expandedTurns by remember(threadId) { mutableStateOf(emptySet<String>()) }
     var revealedTurnMessageId by remember(threadId) { mutableStateOf<String?>(null) }
     val predictiveChips = remember(quickReplies) {
@@ -501,7 +528,7 @@ private fun LoadedChat(
     } else {
         null
     }
-    val liveReasoning = reasoning?.takeIf { tail == TranscriptTail.REASONING }
+    val liveReasoning = reasoning?.takeIf { activityDetail != ActivityDetail.HIDDEN }
     val hasMore = state.hasMore[threadId] == true
     // What stops the predictive chips from covering the one question on screen
     // that only a person can answer.
@@ -607,7 +634,7 @@ private fun LoadedChat(
         session.loadThreadIfNeeded(threadId)
     }
 
-    val headerCount = if (hasMore) 1 else 0
+    val headerCount = 1
     // One slot at the bottom, whichever of the three is in it — iOS gives all of
     // them the same `.id(Self.liveBubbleId)` for the same reason: they replace
     // one another, they do not stack.
@@ -617,14 +644,37 @@ private fun LoadedChat(
     // A conversation grows from the bottom: opening a chat starts on the newest
     // message rather than the oldest.
     var settled by remember(threadId) { mutableStateOf(false) }
+    var followingLatest by remember(threadId) { mutableStateOf(true) }
+    var botBelow by remember(threadId) { mutableStateOf(false) }
+    val latestThreshold = with(androidx.compose.ui.platform.LocalDensity.current) { 72.dp.roundToPx() }
+    val jumpLabel = stringResource(R.string.mobile_chat_jump_latest)
+    LaunchedEffect(threadId, listState, latestThreshold) {
+        listState.interactionSource.interactions.collect { interaction ->
+            when (interaction) {
+                is DragInteraction.Start -> followingLatest = false
+                is DragInteraction.Stop, is DragInteraction.Cancel -> {
+                    androidx.compose.runtime.withFrameNanos { }
+                    followingLatest = listState.layoutInfo.endHiddenBelow() <= latestThreshold
+                    if (followingLatest) botBelow = false
+                }
+            }
+        }
+    }
     LaunchedEffect(threadId, itemCount) {
         if (settled || itemCount == 0) return@LaunchedEffect
         listState.scrollToItem(itemCount - 1)
         settled = true
     }
-    LaunchedEffect(threadId, transcript.lastOrNull()?.id) {
+    LaunchedEffect(threadId, rawTranscript.lastOrNull()?.id, transcript.lastOrNull()?.id) {
+        val fresh = arrivalTracker.consumeTailChange()
+        val latest = rawTranscript.lastOrNull()
+        if (fresh && latest?.role == Message.Role.USER) { followingLatest = true; botBelow = false }
         if (!settled || itemCount == 0) return@LaunchedEffect
-        listState.animateScrollToItem(itemCount - 1)
+        if (followingLatest) listState.animateScrollToItem(itemCount - 1)
+        else if (fresh && latest?.role == Message.Role.BOT) {
+            val row = transcript.indexOfFirst { it.containsMessage(latest.id) }
+            if (row >= 0 && headerCount + row >= (listState.layoutInfo.visibleItemsInfo.lastOrNull()?.index ?: 0)) botBelow = true
+        }
     }
     // Follow the live row: its arrival, its change of kind, and the text inside
     // it. Keyed on length rather than the string so this fires once per delta
@@ -632,9 +682,9 @@ private fun LoadedChat(
     // into a stutter. [tail] is a key of its own because the working row appears
     // with no text at all, and a row nobody scrolls to is a row nobody is told
     // about.
-    LaunchedEffect(threadId, tail, liveText?.length ?: 0) {
+    LaunchedEffect(threadId, tail, liveText?.length ?: 0, reasoning?.length ?: 0) {
         if (liveCount == 0 || itemCount == 0) return@LaunchedEffect
-        listState.scrollToItem(itemCount - 1)
+        if (followingLatest) listState.scrollToItem(itemCount - 1) else botBelow = true
     }
     // The call bar sits under the transcript and changes height as a call
     // goes on: a caption line once it is live, a second line on the remote
@@ -666,6 +716,7 @@ private fun LoadedChat(
         if (index < 0) return@LaunchedEffect
         val turn = transcript[index] as? TranscriptRow.AssistantTurn
         if (turn != null) expandedTurns = expandedTurns + turn.turnId
+        followingLatest = false
         listState.scrollToItem(headerCount + index)
         if (turn != null) {
             // The fold can span several screens. Its child brings the actual
@@ -869,6 +920,7 @@ private fun LoadedChat(
     Box(
         modifier = Modifier
             .fillMaxSize()
+            .background(MaterialTheme.colorScheme.background)
             .horizontalBackSwipe(onBack = { latestBackBySwipe.value() }),
     ) {
         Column(modifier = Modifier.fillMaxSize()) {
@@ -890,15 +942,16 @@ private fun LoadedChat(
                     modifier = Modifier
                         .align(Alignment.Center)
                         .widthIn(max = CHAT_CONTENT_MAX_WIDTH)
-                        .fillMaxSize(),
+                        .fillMaxSize()
+                        .testTag("chat-transcript"),
                     contentPadding = PaddingValues(
-                        start = 16.dp,
-                        end = 16.dp,
+                        start = 12.dp,
+                        end = 12.dp,
                         // Room for the floating face when scrolled to the top.
                         top = HEADER_CLEARANCE,
                         bottom = 12.dp,
                     ),
-                    verticalArrangement = Arrangement.spacedBy(6.dp),
+                    verticalArrangement = Arrangement.spacedBy(2.dp),
                 ) {
                     if (hasMore) {
                         item(key = LOAD_EARLIER_KEY) {
@@ -915,6 +968,7 @@ private fun LoadedChat(
                                         val freshRows = transcriptRows(
                                             fresh.visibleTranscript(threadId),
                                             activityDetail,
+                                            showSummaries = showSummaries,
                                         )
                                         val index = freshRows.indexOfFirst { row ->
                                             row.id == anchor || row.containsMessage(anchor)
@@ -922,7 +976,7 @@ private fun LoadedChat(
                                         if (index < 0) return@launch
                                         // The "load earlier" row is item 0 for as
                                         // long as there is still more to fetch.
-                                        val offset = if (fresh.hasMore[threadId] == true) 1 else 0
+                                        val offset = 1
                                         listState.scrollToItem(index + offset)
                                     }
                                 },
@@ -932,9 +986,17 @@ private fun LoadedChat(
                             }
                         }
                     }
+                    if (!hasMore) item(key = "chat-poster") {
+                        ChatPoster(chat, empty = rawTranscript.isEmpty()) {
+                            if (bot != null) showingProfile = true else showingPlus = true
+                        }
+                    }
 
                     itemsIndexedKeyed(transcript) { index, message ->
-                        Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                        val appended = remember(message.id) { arrivalTracker.consume(message.head.id) }
+                        ArrivalRow(message.id, appended, message.role == Message.Role.USER) {
+                        Column(Modifier.padding(top = if (index == 0 || TranscriptLayout.endsRowRun(transcript, index - 1)) 8.dp else 0.dp),
+                            verticalArrangement = Arrangement.spacedBy(6.dp)) {
                             // A gap in time is worth marking; a timestamp on every
                             // message is just noise.
                             if (TranscriptLayout.startsNewRowStretch(transcript, index)) {
@@ -959,11 +1021,14 @@ private fun LoadedChat(
                                     // One tail per run of bubbles from the same author,
                                     // not one per bubble.
                                     endsRun = TranscriptLayout.endsRowRun(transcript, index),
+                                    showSender = index == 0 || TranscriptLayout.endsRowRun(transcript, index - 1),
                                     openLink = ::openLink,
                                     openAttachment = ::openAttachment,
                                     openThread = ::openThread,
+                                    digest = if (message.message.id in terminalReplies) digests[message.message.turnId] else null,
                                 )
-                                is TranscriptRow.ActivityRun -> ActivityRunChip(message.items, ::openThread)
+                                is TranscriptRow.ActivityRun -> ActivityRunChip(message.items, ::openThread, busy = chat.busy)
+                                is TranscriptRow.Plan -> PlanCard(message)
                                 is TranscriptRow.AssistantTurn -> AssistantTurnChip(
                                     turn = message,
                                     chat = chat,
@@ -980,17 +1045,20 @@ private fun LoadedChat(
                                     openLink = ::openLink,
                                     openAttachment = ::openAttachment,
                                     openThread = ::openThread,
+                                    digest = digests[message.turnId],
                                 )
                             }
+                        }
                         }
                     }
 
                     if (liveCount == 1) {
                         item(key = LIVE_BUBBLE_KEY) {
-                            if (tail == TranscriptTail.WORKING) {
-                                WorkingBubble(name = chat.name, color = chat.color)
-                            } else {
-                                StreamingBubble(text = liveText, reasoning = liveReasoning)
+                            AnimatedContent(targetState = tail == TranscriptTail.WORKING, transitionSpec = {
+                                (fadeIn() togetherWith fadeOut()).using(SizeTransform(clip = false))
+                            }, label = "Typing to reply") { working ->
+                                if (working) WorkingBubble(name = chat.name, color = chat.color)
+                                else StreamingBubble(text = liveText, reasoning = liveReasoning)
                             }
                         }
                     }
@@ -1042,6 +1110,24 @@ private fun LoadedChat(
                         .align(Alignment.TopCenter)
                         .widthIn(max = CHAT_CONTENT_MAX_WIDTH),
                 )
+                androidx.compose.animation.AnimatedVisibility(visible = !followingLatest && listState.canScrollForward,
+                    enter = fadeIn() + slideInVertically { it / 2 }, exit = fadeOut(),
+                    modifier = Modifier.align(Alignment.BottomEnd).padding(12.dp)) {
+                    Button(onClick = {
+                        followingLatest = true; botBelow = false
+                        if (itemCount > 0) scope.launch { listState.animateScrollToItem(itemCount - 1) }
+                    }, modifier = Modifier.testTag("jump-to-latest").heightIn(min = 48.dp)
+                        .semantics { contentDescription = jumpLabel },
+                        shape = RoundedCornerShape(24.dp),
+                        colors = ButtonDefaults.buttonColors(containerColor = chatTint.theirs, contentColor = chatTint.ink),
+                        contentPadding = PaddingValues(horizontal = 12.dp, vertical = 8.dp)) {
+                        if (botBelow) {
+                            Box(Modifier.testTag("jump-to-latest-face")) { ChatAvatar(chat, size = 24.dp) }
+                            Spacer(Modifier.width(8.dp))
+                        }
+                        Icon(Icons.Filled.KeyboardArrowDown, null, modifier = Modifier.size(20.dp))
+                    }
+                }
             }
 
             LiveCallBarHost(
@@ -1053,6 +1139,21 @@ private fun LoadedChat(
                     .fillMaxWidth()
                     .padding(horizontal = 12.dp),
             )
+            AnimatedVisibility(visible = livePlan != null, enter = slideInVertically { it } + fadeIn(), exit = slideOutVertically { it } + fadeOut()) {
+                livePlan?.let { plan ->
+                    Box(Modifier.padding(horizontal = 12.dp, vertical = 4.dp)) {
+                        LivePlanStrip(plan, liveStatus) {
+                            followingLatest = false
+                            val index = transcript.indexOfFirst { it.id == plan.id }
+                            if (index >= 0) scope.launch {
+                                listState.animateScrollToItem(headerCount + index)
+                                followingLatest = listState.layoutInfo.endHiddenBelow() <= latestThreshold
+                                if (followingLatest) botBelow = false
+                            }
+                        }
+                    }
+                }
+            }
 
             Composer(
                 modifier = Modifier
@@ -1123,7 +1224,7 @@ private fun LoadedChat(
                     publishFrom(composer)
                 },
                 stoppable = chat.canStop,
-                liveStatus = liveStatus,
+                liveStatus = if (livePlan == null) liveStatus else null,
                 onStop = {
                     haptics.play(HapticCue.SELECT)
                     scope.launch { session.interrupt(chat) }
@@ -1282,17 +1383,24 @@ private fun ChatHeader(
     onOpenThreads: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
-    val surface = MaterialTheme.colorScheme.surface
+    val wash = chatTint.wash
+    val background = MaterialTheme.colorScheme.background
+    val density = androidx.compose.ui.platform.LocalDensity.current
+    var controlsHeight by remember(density) { mutableStateOf(116.dp) }
     Box(modifier = modifier.fillMaxWidth()) {
+        // Opaque through the actual controls; only the 24dp below them fades.
+        Spacer(Modifier.fillMaxWidth().height(controlsHeight + 24.dp).drawWithCache {
+            val solidThrough = ((size.height - 24.dp.toPx()) / size.height).coerceIn(0f, 1f)
+            val brush = Brush.verticalGradient(0f to background, solidThrough to background, 1f to Color.Transparent)
+            onDrawBehind { drawRect(brush) }
+        })
         Spacer(
             modifier = Modifier
                 .fillMaxWidth()
-                .height(HEADER_BAR + HEADER_SCRIM_FADE)
+                .height(260.dp)
                 .drawWithCache {
-                    val solid = HEADER_BAR.toPx() / size.height
                     val brush = Brush.verticalGradient(
-                        0f to surface,
-                        solid to surface,
+                        0f to wash,
                         1f to Color.Transparent,
                     )
                     onDrawBehind { drawRect(brush) }
@@ -1330,6 +1438,7 @@ private fun ChatHeader(
         Column(
             modifier = Modifier
                 .align(Alignment.TopCenter)
+                .onSizeChanged { controlsHeight = with(density) { it.height.toDp() } }
                 .padding(top = 2.dp),
             horizontalAlignment = Alignment.CenterHorizontally,
             verticalArrangement = Arrangement.spacedBy(6.dp),
@@ -1591,7 +1700,7 @@ private fun MentionPicker(choices: List<MentionChoice>, bots: List<Bot>, onPick:
             // Four rows, then it scrolls: a big room stays reachable without
             // the list climbing over the conversation.
             .heightIn(max = MENTION_ROW_HEIGHT * 4)
-            .background(MaterialTheme.colorScheme.onSurface.copy(alpha = 0.06f), RoundedCornerShape(12.dp))
+            .background(chatTint.theirs, RoundedCornerShape(20.dp))
             .verticalScroll(rememberScrollState())
             .semantics { contentDescription = label },
     ) {
@@ -1628,7 +1737,7 @@ private fun MentionPicker(choices: List<MentionChoice>, bots: List<Bot>, onPick:
     }
 }
 
-private val MENTION_ROW_HEIGHT = 44.dp
+private val MENTION_ROW_HEIGHT = 48.dp
 
 /**
  * What a working bot is saying, at Hidden: one grey line above the composer,
@@ -1636,7 +1745,7 @@ private val MENTION_ROW_HEIGHT = 44.dp
  * `LiveStatusLine`.
  */
 @Composable
-private fun LiveStatusLine(text: String) {
+internal fun LiveStatusLine(text: String) {
     Row(
         modifier = Modifier
             .fillMaxWidth()
@@ -1966,7 +2075,7 @@ private fun Composer(
                             fontSize = 17.sp,
                             color = MaterialTheme.colorScheme.onSurface,
                         ),
-                        cursorBrush = SolidColor(MaterialTheme.colorScheme.onSurface),
+                        cursorBrush = SolidColor(BubbleColor.mine),
                         // The software keyboard's Return breaks the line, like
                         // Messages; the arrow button on the bar is the one send.
                         // A hardware Return still sends and Shift+Return breaks

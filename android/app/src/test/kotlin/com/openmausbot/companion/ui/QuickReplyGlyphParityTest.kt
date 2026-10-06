@@ -10,13 +10,13 @@ import kotlin.test.assertNotEquals
  * be the same mark, or the editor is a lie: someone picks "terminal" and the
  * composer shows something else.
  *
- * That half is now the compiler's: [quickReplyGlyph] is one function, called by
+ * That half is now the compiler's: [quickReplyDrawable] is one function, called by
  * the editor's chips and by the composer's, so there is no second table left to
  * drift — which is why this test no longer reads either file as text.
  *
  * What is left is the half no type can state: that every id
  * `QuickReply.ICON_CHOICES` offers reaches a branch of its own, instead of
- * falling quietly through to the placeholder dot.
+ * falling quietly through to the fallback drawable.
  */
 class QuickReplyGlyphParityTest {
 
@@ -25,7 +25,7 @@ class QuickReplyGlyphParityTest {
         for (choice in QuickReply.ICON_CHOICES) {
             assertNotEquals(
                 PLACEHOLDER,
-                quickReplyGlyph(choice),
+                quickReplyDrawable(choice),
                 "\"$choice\" is offered in the editor but falls through to the placeholder",
             )
         }
@@ -34,7 +34,7 @@ class QuickReplyGlyphParityTest {
     @Test
     fun `no two choices are drawn with the same mark`() {
         // A grid of twelve chips is only a choice if the twelve look different.
-        val marks = QuickReply.ICON_CHOICES.associateWith(::quickReplyGlyph)
+        val marks = QuickReply.ICON_CHOICES.associateWith(::quickReplyDrawable)
 
         assertEquals(
             QuickReply.ICON_CHOICES.size,
@@ -45,6 +45,6 @@ class QuickReplyGlyphParityTest {
 
     private companion object {
         /** What an id no branch names is drawn as — the `else` of the table. */
-        val PLACEHOLDER = quickReplyGlyph("an id the table does not name")
+        val PLACEHOLDER = quickReplyDrawable("an id the table does not name")
     }
 }

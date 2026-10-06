@@ -176,9 +176,11 @@ class MarkdownTest {
         is MarkdownBlock.Paragraph -> block.text
         is MarkdownBlock.Bullet -> block.text
         is MarkdownBlock.Ordered -> block.number.toString() + block.text
+        is MarkdownBlock.Task -> (block.number?.toString() ?: "") + block.text
         is MarkdownBlock.Heading -> block.text
         is MarkdownBlock.Code -> block.language.orEmpty() + block.text
         is MarkdownBlock.Quote -> block.text
+        is MarkdownBlock.Table -> (block.headers + block.rows.flatten()).joinToString("")
         MarkdownBlock.Rule -> ""
     }
 }

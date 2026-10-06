@@ -91,7 +91,7 @@ fun ClaudeUpdateCard(messageId: String, instanceId: String) {
     Column(
         modifier = Modifier
             .fillMaxWidth()
-            .background(secondaryTint.copy(alpha = 0.13f), RoundedCornerShape(22.dp))
+            .background(chatTint.theirs, RoundedCornerShape(20.dp))
             .padding(16.dp)
             .semantics { liveRegion = LiveRegionMode.Polite },
         verticalArrangement = Arrangement.spacedBy(10.dp),
@@ -106,8 +106,9 @@ fun ClaudeUpdateCard(messageId: String, instanceId: String) {
                     horizontalArrangement = Arrangement.spacedBy(8.dp),
                     verticalArrangement = Arrangement.spacedBy(4.dp),
                 ) {
-                    Button(onClick = ::update) { Text("Update Claude for me") }
-                    TextButton(onClick = { phase = ClaudeUpdatePhase.Manual }) {
+                    Button(onClick = ::update, colors = androidx.compose.material3.ButtonDefaults.buttonColors(containerColor = chatTint.ink, contentColor = chatTint.actionText)) { Text("Update Claude for me") }
+                    TextButton(onClick = { phase = ClaudeUpdatePhase.Manual },
+                        colors = androidx.compose.material3.ButtonDefaults.textButtonColors(contentColor = chatTint.ink, containerColor = chatTint.inset)) {
                         Text("I'll do it myself")
                     }
                 }
@@ -152,7 +153,7 @@ fun ClaudeUpdateCard(messageId: String, instanceId: String) {
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .background(secondaryTint.copy(alpha = 0.08f), RoundedCornerShape(10.dp))
+                        .background(chatTint.inset, RoundedCornerShape(12.dp))
                         .padding(start = 12.dp, end = 4.dp),
                     verticalAlignment = Alignment.CenterVertically,
                 ) {

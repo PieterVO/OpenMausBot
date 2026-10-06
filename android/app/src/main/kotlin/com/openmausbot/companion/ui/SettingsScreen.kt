@@ -25,6 +25,7 @@ import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.RadioButton
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
+import androidx.compose.material3.Switch
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
@@ -38,6 +39,8 @@ import androidx.compose.ui.platform.ClipEntry
 import androidx.compose.ui.platform.LocalClipboard
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
@@ -83,6 +86,7 @@ fun SettingsScreen(
     val status by session.status.collectAsState()
     val notifications by environment.notifications.access.collectAsState()
     val activityDetail by environment.chatPreferences.activityDetail.collectAsState()
+    val showWorkSummaries by environment.chatPreferences.showWorkSummaries.collectAsState()
     val appearanceSkin by environment.chatPreferences.appearanceSkin.collectAsState()
     val rosterDensity by environment.chatPreferences.rosterDensity.collectAsState()
     val scope = rememberCoroutineScope()
@@ -241,6 +245,13 @@ fun SettingsScreen(
                 SettingsButton(stringResource(R.string.mobile_settings_change_activity_detail)) { choosingActivity = true }
                 SettingsButton(stringResource(R.string.mobile_quick_replies_c14223c4)) { editingQuickReplies = true }
                 Footnote(localizedActivityCaption(activityDetail))
+                val summariesLabel = localizedMobileCopy("Work summaries")
+                Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                    Text(summariesLabel, modifier = Modifier.weight(1f), style = MaterialTheme.typography.bodyLarge)
+                    Switch(checked = showWorkSummaries, onCheckedChange = environment.chatPreferences::setShowWorkSummaries,
+                        modifier = Modifier.semantics { contentDescription = summariesLabel })
+                }
+                Footnote(localizedMobileCopy("Show what each reply did under it. Always shown when a step failed."))
             }
 
             // Per device, like the desktop's sidebar density: a phone and a

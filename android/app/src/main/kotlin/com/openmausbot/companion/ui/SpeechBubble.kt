@@ -34,6 +34,10 @@ import androidx.compose.ui.unit.dp
  */
 enum class BubbleTail { NONE, LEADING, TRAILING }
 
+internal fun physicalBubbleTail(tail: BubbleTail, direction: LayoutDirection): BubbleTail =
+    if (direction == LayoutDirection.Ltr || tail == BubbleTail.NONE) tail
+    else if (tail == BubbleTail.LEADING) BubbleTail.TRAILING else BubbleTail.LEADING
+
 @Immutable
 data class SpeechBubbleShape(
     val tail: BubbleTail,
@@ -58,7 +62,7 @@ data class SpeechBubbleShape(
             )
         }
         val path = trailingTailPath(size, radius)
-        if (tail == BubbleTail.LEADING) {
+        if (physicalBubbleTail(tail, layoutDirection) == BubbleTail.LEADING) {
             // Mirror the trailing shape about the rect's vertical centre line —
             // the Swift applies the same flip rather than drawing a second path.
             path.transform(mirrorAcross(size.width))
@@ -94,7 +98,7 @@ data class SpeechBubbleShape(
  * [TAIL_DROP] below the bottom edge.
  */
 object SpeechBubble {
-    val CORNER_RADIUS: Dp = 22.dp
+    val CORNER_RADIUS: Dp = 20.dp
 
     internal const val CAP_RADIUS = 179f
     internal const val TAIL_DROP = 68f
@@ -193,19 +197,10 @@ private const val QUARTER = 90f
  * a see-through bubble shows the seam.
  */
 object BubbleColor {
-    /** What you said. The mascot palette's blue, not the system's. */
-    val mine: Color = Color(MausPalette.argb("blue"))
+    /** The same deep blue in every skin, with a contrast-safe white label. */
+    val mine: Color = Color(0xFF2E6FDB)
     val mineText: Color = Color.White
 
-    private val theirsDark = Color(0xFF262629)
-    private val theirsLight = Color(0xFFE9E9EB)
-
-    /**
-     * What a bot said. Near-black on dark, a soft grey on light — chosen off the
-     * scheme in force rather than off the system setting, so a screen rendered in
-     * a forced theme still gets the bubble that belongs to it.
-     */
     val theirs: Color
-        @Composable get() =
-            if (MaterialTheme.colorScheme.surface.luminance() < 0.5f) theirsDark else theirsLight
+        @Composable get() = chatTint.theirs
 }

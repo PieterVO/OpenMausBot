@@ -158,7 +158,15 @@ data class ToolActivity(
      * finished teammate's report on its "… replied" chip, at most 2000
      * characters and already redacted. Older computers omit it.
      */
+    @Serializable(with = OptionalWireStringSerializer::class)
     val output: String? = null,
+    /** Redacted previews may be shortened mid-JSON; plan parsing treats those as absent. */
+    @Serializable(with = OptionalWireStringSerializer::class)
+    val input: String? = null,
+    @Serializable(with = OptionalWireStringSerializer::class)
+    val summary: String? = null,
+    @Serializable(with = OptionalWireStringSerializer::class)
+    val itemId: String? = null,
 )
 
 /**
@@ -243,16 +251,48 @@ data class Message(
     val turnTerminal: Boolean? = null,
     /**
      * "api" for a user line that arrived through the computer's HTTP API,
-     * "call" for a request the person spoke on a Live call. Last on purpose:
+     * "call" for a request the person spoke on a Live call. Keep its position:
      * tests build messages positionally.
      */
     val via: String? = null,
+    /** A malformed optional receipt must never discard the reply beside it. */
+    @Serializable(with = OptionalStructuredDigestSerializer::class)
+    val digest: StructuredTurnDigest? = null,
+    @Serializable(with = OptionalWireBooleanSerializer::class)
+    val turnSucceeded: Boolean? = null,
 ) {
     @Serializable(with = MessageKindSerializer::class)
     enum class Kind { TEXT, OPTIONS, ACTIVITY, SCREEN, DIGEST, COMPACTION, ROUTINE_RUN, UNKNOWN }
 
     @Serializable(with = MessageRoleSerializer::class)
     enum class Role { BOT, USER }
+}
+
+/** Consume the whole optional value before deciding whether its wire type is usable. */
+object OptionalWireStringSerializer : KSerializer<String?> {
+    override val descriptor: SerialDescriptor = JsonElement.serializer().descriptor
+
+    override fun deserialize(decoder: Decoder): String? =
+        (decoder as JsonDecoder).decodeJsonElement().let { element ->
+            (element as? JsonPrimitive)?.takeIf { it.isString }?.content
+        }
+
+    override fun serialize(encoder: Encoder, value: String?) {
+        (encoder as JsonEncoder).encodeJsonElement(value?.let(::JsonPrimitive) ?: JsonNull)
+    }
+}
+
+object OptionalWireBooleanSerializer : KSerializer<Boolean?> {
+    override val descriptor: SerialDescriptor = JsonElement.serializer().descriptor
+
+    override fun deserialize(decoder: Decoder): Boolean? =
+        (decoder as JsonDecoder).decodeJsonElement().let { element ->
+            (element as? JsonPrimitive)?.takeUnless { it.isString }?.booleanOrNull
+        }
+
+    override fun serialize(encoder: Encoder, value: Boolean?) {
+        (encoder as JsonEncoder).encodeJsonElement(value?.let(::JsonPrimitive) ?: JsonNull)
+    }
 }
 
 object MessageKindSerializer : KSerializer<Message.Kind> {
