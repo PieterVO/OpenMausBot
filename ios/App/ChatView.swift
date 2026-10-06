@@ -635,17 +635,22 @@ struct ChatView: View {
         .overlay(alignment: .bottomTrailing) {
 #if DEBUG
             if ProcessInfo.processInfo.arguments.contains("-busy-fleet-preview") {
-                VStack(alignment: .trailing, spacing: 0) {
-                    Text("Offline busy-fleet fixture")
-                        .font(.caption2)
-                        .accessibilityIdentifier("busy-fleet-progress")
-                        .accessibilityValue(session.state.cursor ?? "0")
-                    // Message rows drawn so far: ResponsivenessUITests checks
-                    // that typing and other threads' tokens add none.
-                    Text(verbatim: "rows \(TranscriptRedrawProbe.rows)")
-                        .font(.caption2)
-                        .accessibilityIdentifier("transcript-row-redraws")
-                        .accessibilityValue(String(TranscriptRedrawProbe.rows))
+                // On its own clock: token-only deliveries do not redraw the
+                // chat (Session.state), so a badge read at render time would
+                // stand still while the fleet streams.
+                TimelineView(.periodic(from: .now, by: 0.25)) { _ in
+                    VStack(alignment: .trailing, spacing: 0) {
+                        Text("Offline busy-fleet fixture")
+                            .font(.caption2)
+                            .accessibilityIdentifier("busy-fleet-progress")
+                            .accessibilityValue(session.state.cursor ?? "0")
+                        // Message rows drawn so far: ResponsivenessUITests checks
+                        // that typing and other threads' tokens add none.
+                        Text(verbatim: "rows \(TranscriptRedrawProbe.rows)")
+                            .font(.caption2)
+                            .accessibilityIdentifier("transcript-row-redraws")
+                            .accessibilityValue(String(TranscriptRedrawProbe.rows))
+                    }
                 }
                 .allowsHitTesting(false)
             }

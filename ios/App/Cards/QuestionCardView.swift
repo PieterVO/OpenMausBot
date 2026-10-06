@@ -254,6 +254,7 @@ struct QuestionCardView: View {
         }
         .buttonStyle(.plain)
         .disabled(!complete || answering)
+        .accessibilityIdentifier("question-submit")
         .padding(.top, 2)
     }
 

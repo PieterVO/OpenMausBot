@@ -121,7 +121,8 @@ final class ChatShowcaseUITests: XCTestCase {
         XCTAssertTrue(window.waitForExistence(timeout: 5))
         capture("question-card", app)
         window.tap()
-        XCTAssertTrue(app.buttons["Submit answer"].isEnabled)
+        // The composer says "Submit answer" too while a question waits.
+        XCTAssertTrue(app.buttons["question-submit"].isEnabled)
         capture("question-selected", app)
 
         launch(app, extra: ["-chat-showcase-component", "credential"])
