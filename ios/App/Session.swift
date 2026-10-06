@@ -202,7 +202,7 @@ final class Session: ObservableObject {
         let arguments = ProcessInfo.processInfo.arguments
         if (arguments.contains("-store-preview") || arguments.contains("-computer-switcher-preview")),
            let url = Bundle.main.url(
-               forResource: arguments.contains("-images-preview") ? "ImagePreview" : arguments.contains("-chat-update-preview") ? "ChatUpdatePreview" : arguments.contains("-chat-presentation-preview") ? "ChatPresentationPreview" : arguments.contains("-roster-preview") ? "RosterPreview" : arguments.contains("-threads-preview") ? "ThreadPreview" : "StorePreview",
+               forResource: arguments.contains("-images-preview") ? "ImagePreview" : arguments.contains("-chat-showcase-preview") ? "ChatShowcasePreview" : arguments.contains("-chat-update-preview") ? "ChatUpdatePreview" : arguments.contains("-chat-presentation-preview") ? "ChatPresentationPreview" : arguments.contains("-roster-preview") ? "RosterPreview" : arguments.contains("-threads-preview") ? "ThreadPreview" : "StorePreview",
                withExtension: "json"
            ),
            let data = try? Data(contentsOf: url),
@@ -258,6 +258,17 @@ final class Session: ObservableObject {
                 }
             }
             var fleet = fleet
+            if arguments.contains("-chat-showcase-preview"),
+               let flag = arguments.firstIndex(of: "-chat-showcase-component"), flag + 1 < arguments.count,
+               let pepper = fleet.bots.firstIndex(where: { $0.id == "preview-pepper" }),
+               let component = fleet.bots[pepper].messages?.first(where: { $0.id == "showcase-component-\(arguments[flag + 1])" }) {
+                // Alternate branches are native cards, not another UI or a
+                // transport mock. The ordinary showcase still ends at approval.
+                fleet.bots[pepper].messages = fleet.bots[pepper].messages?.filter {
+                    $0.id == "showcase-ask" || $0.id == component.id
+                }
+                fleet.bots[pepper].activeLeafId = component.id
+            }
             if arguments.contains("-live-call-long-name-preview"),
                let pepper = fleet.bots.firstIndex(where: { $0.id == "preview-pepper" }) {
                 // Forty characters, too long for the call bar's line: the
@@ -326,11 +337,35 @@ final class Session: ObservableObject {
                 digest.text = "[digest] · tools: shell ×2 · reply: Digest must stay hidden"
                 state.apply(.message(threadId: "preview-gmail", message: digest))
             }
+            if arguments.contains("-chat-showcase-preview"),
+               (arguments.contains("-chat-showcase-busy-preview") || arguments.contains("-chat-reasoning-preview")),
+               let index = state.bots.firstIndex(where: { $0.id == "preview-pepper" }) {
+                state.bots[index].busy = true
+                if let task = state.bots[index].tasks?.firstIndex(where: { $0.threadId == "preview-gmail" }) {
+                    state.bots[index].tasks?[task].busy = true
+                    state.bots[index].tasks?[task].activity = "working"
+                }
+                if arguments.contains("-chat-showcase-busy-preview") {
+                    let preview = #"""
+                    [
+                      {"id":"showcase-live-ask","parentId":"showcase-approval","role":"user","kind":"text","at":1791276150000,"text":"Can you find a rain-friendly version, just in case?"},
+                      {"id":"showcase-live-narration","parentId":"showcase-live-ask","role":"bot","kind":"text","at":1791276151000,"text":"I’m finding a cosy backup for us.","turnId":"showcase-live-turn"},
+                      {"id":"showcase-live-plan","parentId":"showcase-live-narration","role":"bot","kind":"activity","at":1791276152000,"turnId":"showcase-live-turn","tool":{"name":"TodoWrite","summary":"Building a rain-friendly Saturday","ok":true,"input":"{\"todos\":[{\"content\":\"Check the forecast\",\"status\":\"completed\"},{\"content\":\"Find somewhere indoors\",\"activeForm\":\"Finding a cosy indoor spot\",\"status\":\"in_progress\"},{\"content\":\"Save a backup route\",\"status\":\"pending\"}]}"}}
+                    ]
+                    """#
+                    if let messages = try? JSONDecoder().decode([Message].self, from: Data(preview.utf8)) {
+                        for message in messages { state.apply(.message(threadId: "preview-gmail", message: message)) }
+                    }
+                }
+            }
             if arguments.contains("-chat-reasoning-preview"),
                let frameURL = Bundle.main.url(forResource: "ChatReasoningPreview", withExtension: "json"),
                let frameData = try? Data(contentsOf: frameURL),
                let frame = try? JSONDecoder().decode(Frame.self, from: frameData) {
                 state.apply(frame)
+            }
+            if arguments.contains("-chat-answer-preview") {
+                state.streaming["preview-gmail"] = "Here’s what I found so far."
             }
             if arguments.contains("-threads-preview"),
                let pagesURL = Bundle.main.url(forResource: "ThreadPreviewPages", withExtension: "json"),
@@ -342,6 +377,9 @@ final class Session: ObservableObject {
                 // The fresh-install default is checked in UI tests; an
                 // earlier run on the same simulator may have saved a choice.
                 UserDefaults.standard.removeObject(forKey: PrefKey.rosterDensity)
+            }
+            if arguments.contains("-reset-work-summaries") {
+                UserDefaults.standard.removeObject(forKey: PrefKey.showWorkSummaries)
             }
             if arguments.contains("-busy-fleet-preview") { startBusyFleetPreview() }
             status = .live

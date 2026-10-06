@@ -87,19 +87,31 @@ final class TranscriptPresentationUITests: XCTestCase {
     func testHiddenSuppressesLiveReasoning() {
         let app = launchPreview(detail: "hidden", reasoning: true)
         XCTAssertTrue(app.buttons["assistant-turn.preview-turn"].waitForExistence(timeout: 5))
-        XCTAssertFalse(contains("Thinking…", in: app))
+        XCTAssertFalse(app.descendants(matching: .any)["thinking-row"].exists)
         XCTAssertTrue(app.descendants(matching: .any).matching(NSPredicate(format: "label == %@", "Pepper is working")).firstMatch.exists)
     }
 
     @MainActor
     func testFullKeepsLiveReasoningAvailable() {
         let app = launchPreview(detail: "full", reasoning: true)
-        XCTAssertTrue(app.staticTexts["Thinking…"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.buttons["thinking-row"].waitForExistence(timeout: 5))
         XCTAssertTrue(app.buttons["assistant-turn.preview-turn"].exists)
     }
 
     @MainActor
-    private func launchPreview(detail: String, reasoning: Bool = false, focused: Bool = false, receipts: Bool = false, update: Bool = false, live: Bool = false) -> XCUIApplication {
+    func testAnswerStreamWinsWhileReasoningRemainsAvailable() {
+        let app = launchPreview(detail: "full", reasoning: true, answer: true)
+        XCTAssertTrue(contains("Here’s what I found so far.", in: app))
+        let thinking = app.buttons["thinking-row"]
+        XCTAssertTrue(thinking.waitForExistence(timeout: 5))
+        XCTAssertTrue(thinking.label.contains("Thought for"), thinking.label)
+        thinking.tap()
+        XCTAssertTrue(app.descendants(matching: .any)["thinking-panel"].waitForExistence(timeout: 3))
+        screenshot("Answer wins, retained reasoning available on tap", in: app)
+    }
+
+    @MainActor
+    private func launchPreview(detail: String, reasoning: Bool = false, focused: Bool = false, receipts: Bool = false, update: Bool = false, live: Bool = false, answer: Bool = false) -> XCUIApplication {
         continueAfterFailure = false
         let app = XCUIApplication()
         app.launchArguments = [
@@ -115,6 +127,7 @@ final class TranscriptPresentationUITests: XCTestCase {
             "-companion.onboarding.notificationsSeen", "YES"
         ]
         if reasoning { app.launchArguments.append("-chat-reasoning-preview") }
+        if answer { app.launchArguments.append("-chat-answer-preview") }
         if focused { app.launchArguments.append("-chat-focus-preview") }
         if receipts { app.launchArguments.append("-chat-compaction-preview") }
         if update { app.launchArguments.append("-chat-update-preview") }

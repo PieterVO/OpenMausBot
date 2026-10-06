@@ -7,7 +7,7 @@ public struct CommandSkillItem: Identifiable {
     public let iconName: String
     public let brandColor: Color
     public let command: String
-    
+
     public init(id: String, title: String, description: String, iconName: String, brandColor: Color, command: String) {
         self.id = id
         self.title = title
@@ -22,11 +22,13 @@ public struct CommandSkillHUDView: View {
     @Binding public var text: String
     @Binding public var isVisible: Bool
     public let commands: [CommandSkillItem]
-    public let accentColor: Color
+    public let accentColor: Color?
+    public let color: String?
     public let onSelectCommand: (CommandSkillItem) -> Void
-    
-    @Environment(\.colorScheme) private var colorScheme
-    
+
+    @Environment(\.botTintColor) private var botTintColor
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
     public static let defaultCommands: [CommandSkillItem] = [
         CommandSkillItem(
             id: "computer",
@@ -69,21 +71,25 @@ public struct CommandSkillHUDView: View {
             command: "Pause and explain your current plan"
         )
     ]
-    
+
     public init(
         text: Binding<String>,
         isVisible: Binding<Bool>,
         commands: [CommandSkillItem] = CommandSkillHUDView.defaultCommands,
-        accentColor: Color = .purple,
+        accentColor: Color? = nil,
+        color: String? = nil,
         onSelectCommand: @escaping (CommandSkillItem) -> Void
     ) {
         self._text = text
         self._isVisible = isVisible
         self.commands = commands
         self.accentColor = accentColor
+        self.color = color
         self.onSelectCommand = onSelectCommand
     }
-    
+
+    private var ink: Color { accentColor ?? BotTint.ink(color ?? botTintColor) }
+
     private var filteredCommands: [CommandSkillItem] {
         if text.hasPrefix("/") && text.count > 1 {
             let query = String(text.dropFirst()).lowercased()
@@ -93,115 +99,82 @@ public struct CommandSkillHUDView: View {
         }
         return commands
     }
-    
+
     public var body: some View {
-        let isDark = colorScheme == .dark
-        
-        VStack(alignment: .leading, spacing: 8) {
-            headerBar(isDark: isDark)
-            
+        VStack(alignment: .leading, spacing: 4) {
+            headerBar
             ScrollView(.horizontal, showsIndicators: false) {
                 HStack(spacing: 8) {
-                    ForEach(filteredCommands) { cmd in
-                        CommandCardView(cmd: cmd, isDark: isDark) {
-                            onSelectCommand(cmd)
-                            withAnimation { isVisible = false }
+                    ForEach(filteredCommands) { command in
+                        CommandCardView(command: command, ink: ink) {
+                            onSelectCommand(command)
+                            withAnimation(reduceMotion ? nil : .easeOut(duration: 0.2)) { isVisible = false }
                             Haptics.selection()
                         }
                     }
                 }
-                .padding(.horizontal, 10)
-                .padding(.bottom, 8)
+                .padding(.horizontal, 12)
+                .padding(.bottom, 12)
             }
         }
-        .background(
-            LinearGradient(
-                colors: isDark ? [
-                    Color(hex: "#0F172A").opacity(0.96),
-                    Color(hex: "#1E293B").opacity(0.94)
-                ] : [
-                    Color.white.opacity(0.96),
-                    Color(hex: "#F8FAFC").opacity(0.94)
-                ],
-                startPoint: .topLeading,
-                endPoint: .bottomTrailing
-            )
-        )
-        .background(.ultraThinMaterial)
-        .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
-        .overlay(
-            RoundedRectangle(cornerRadius: 16, style: .continuous)
-                .stroke(isDark ? Color.white.opacity(0.14) : Color.black.opacity(0.08), lineWidth: 0.8)
-        )
-        .shadow(color: Color.black.opacity(isDark ? 0.25 : 0.08), radius: 8, y: 3)
-        .padding(.horizontal, 10)
+        .background(BotTint.theirs(color ?? botTintColor), in: RoundedRectangle(cornerRadius: 20, style: .continuous))
+        .padding(.horizontal, 12)
         .padding(.bottom, 4)
     }
-    
-    @ViewBuilder
-    private func headerBar(isDark: Bool) -> some View {
-        HStack {
-            HStack(spacing: 5) {
-                Image(systemName: "command")
-                    .font(.system(size: 11, weight: .bold))
-                    .foregroundColor(accentColor)
-                Text("SLASH COMMANDS")
-                    .font(.system(size: 9.5, weight: .heavy, design: .monospaced))
-                    .foregroundColor(isDark ? Color(hex: "#94A3B8") : Color(hex: "#64748B"))
-            }
-            
-            Spacer()
-            
+
+    private var headerBar: some View {
+        HStack(spacing: 8) {
+            Label("Slash commands", systemImage: "command")
+                .font(.caption.weight(.semibold))
+                .foregroundStyle(ink)
+            Spacer(minLength: 8)
             Button {
-                withAnimation(.spring(response: 0.28, dampingFraction: 0.75)) {
+                withAnimation(reduceMotion ? nil : .spring(response: 0.28, dampingFraction: 0.82)) {
                     isVisible = false
                     if text == "/" { text = "" }
                 }
                 Haptics.selection()
             } label: {
-                Image(systemName: "xmark.circle.fill")
-                    .font(.system(size: 15))
-                    .foregroundColor(isDark ? Color(hex: "#64748B") : Color(hex: "#94A3B8"))
+                Image(systemName: "xmark")
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(ink)
+                    .frame(width: 28, height: 28)
+                    .background(BotTint.inset, in: Circle())
+                    .frame(width: 44, height: 44)
+                    .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
             .accessibilityLabel("Close slash commands")
         }
-        .padding(.horizontal, 12)
-        .padding(.top, 8)
+        .padding(.leading, 14)
+        .padding(.trailing, 4)
+        .padding(.top, 4)
     }
 }
 
 private struct CommandCardView: View {
-    let cmd: CommandSkillItem
-    let isDark: Bool
+    let command: CommandSkillItem
+    let ink: Color
     let action: () -> Void
-    
+    @ScaledMetric(relativeTo: .caption) private var cardWidth = 172
+
     var body: some View {
         Button(action: action) {
-            VStack(alignment: .leading, spacing: 3) {
-                HStack(spacing: 5) {
-                    Image(systemName: cmd.iconName)
-                        .font(.system(size: 11, weight: .bold))
-                        .foregroundColor(cmd.brandColor)
-                    Text(cmd.title)
-                        .font(.system(size: 11.5, weight: .bold))
-                        .foregroundColor(isDark ? .white : Color(hex: "#0F172A"))
-                }
-                
-                Text(LocalizedStringKey(cmd.description))
-                    .font(.system(size: 9.5))
-                    .foregroundColor(isDark ? Color(hex: "#94A3B8") : Color(hex: "#64748B"))
+            VStack(alignment: .leading, spacing: 6) {
+                Label(command.title, systemImage: command.iconName)
+                    .font(.subheadline.weight(.semibold))
+                    .foregroundStyle(ink)
+                Text(LocalizedStringKey(command.description))
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
                     .lineLimit(2)
                     .multilineTextAlignment(.leading)
             }
-            .padding(8)
-            .frame(width: 145, height: 60, alignment: .topLeading)
-            .background(isDark ? Color.white.opacity(0.06) : Color.black.opacity(0.04))
-            .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
-            .overlay(
-                RoundedRectangle(cornerRadius: 10, style: .continuous)
-                    .stroke(cmd.brandColor.opacity(0.35), lineWidth: 0.8)
-            )
+            .padding(12)
+            .frame(width: cardWidth, alignment: .leading)
+            .frame(minHeight: 44, alignment: .topLeading)
+            .background(BotTint.inset, in: RoundedRectangle(cornerRadius: 20, style: .continuous))
+            .contentShape(RoundedRectangle(cornerRadius: 20, style: .continuous))
         }
         .buttonStyle(.plain)
     }

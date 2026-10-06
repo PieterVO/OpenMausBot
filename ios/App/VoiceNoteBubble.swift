@@ -196,14 +196,19 @@ extension VoiceNotePlayer: AVAudioPlayerDelegate {
 /// body; this bubble is the playable clip beside it.
 struct VoiceNoteBubble: View {
     let note: MessageVoiceNote
-    var tint: Color = .accentColor
+    var tint: Color? = nil
+    var color: String? = nil
 
     @EnvironmentObject private var session: Session
     @EnvironmentObject private var liveCall: LiveCallController
+    @Environment(\.botTintColor) private var botTintColor
     @StateObject private var player = VoiceNotePlayer()
     @State private var loading = true
     @State private var loadFailed = false
     @State private var attempt = 0
+
+    private var ink: Color { tint ?? BotTint.ink(color ?? botTintColor) }
+    private var actionLabel: Color { tint == nil ? BotTint.actionLabel(color ?? botTintColor) : .white }
 
     /// This phone is on a Live call, which holds the audio: a note cannot
     /// play until it ends (VoiceNoteCenter refuses it), and the bubble says
@@ -241,10 +246,10 @@ struct VoiceNoteBubble: View {
                 }
             } label: {
                 Image(systemName: player.isPlaying ? "pause.fill" : "play.fill")
-                    .font(.system(size: 12, weight: .semibold))
-                    .foregroundStyle(.white)
-                    .frame(width: 28, height: 28)
-                    .background(Circle().fill(tint))
+                    .font(.body.weight(.semibold))
+                    .foregroundStyle(actionLabel)
+                    .frame(width: 44, height: 44)
+                    .background(Circle().fill(ink))
             }
             .buttonStyle(.plain)
             .disabled(loading || loadFailed || duration == nil || heldByCall)
@@ -255,30 +260,34 @@ struct VoiceNoteBubble: View {
                 ProgressView()
                     .controlSize(.small)
                     .frame(maxWidth: .infinity)
+                    .tint(ink)
             } else if loadFailed {
                 failure
             } else if heldByCall {
                 Text("Voice notes can’t play during a Live call.")
-                    .font(.system(size: 12))
+                    .font(.caption)
                     .foregroundStyle(Color.secondary)
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .accessibilityIdentifier("voice-note-blocked")
             } else {
-                Slider(value: timeBinding, in: 0...Swift.max(duration ?? 1, 0.1))
-                    .tint(tint)
-                    .accessibilityLabel(Text("Voice note position"))
-                Text(timeText)
-                    .font(.system(size: 11))
-                    .monospacedDigit()
-                    .foregroundStyle(Color.secondary)
-                    .accessibilityIdentifier("voice-note-time")
+                VStack(alignment: .trailing, spacing: 0) {
+                    Slider(value: timeBinding, in: 0...Swift.max(duration ?? 1, 0.1))
+                        .tint(ink)
+                        .frame(minHeight: 44)
+                        .accessibilityLabel(Text("Voice note position"))
+                    Text(timeText)
+                        .font(.caption)
+                        .monospacedDigit()
+                        .foregroundStyle(Color.secondary)
+                        .accessibilityIdentifier("voice-note-time")
+                }
             }
         }
-        .padding(.horizontal, 10)
-        .padding(.vertical, 8)
+        .padding(.horizontal, 14)
+        .padding(.vertical, 9)
         .background(
-            RoundedRectangle(cornerRadius: 13, style: .continuous)
-                .fill(Color.secondary.opacity(0.13))
+            RoundedRectangle(cornerRadius: 20, style: .continuous)
+                .fill(BotTint.theirs(color ?? botTintColor))
         )
         .accessibilityElement(children: .contain)
         .accessibilityIdentifier("voice-note")
@@ -313,7 +322,7 @@ struct VoiceNoteBubble: View {
             Image(systemName: "exclamationmark.triangle.fill")
                 .accessibilityHidden(true)
             Text("Couldn’t load the voice note.")
-                .font(.system(size: 12))
+                .font(.caption)
             Spacer(minLength: 4)
             Button("Retry") {
                 player.reset()
@@ -321,8 +330,11 @@ struct VoiceNoteBubble: View {
                 loading = true
                 attempt += 1
             }
-            .font(.system(size: 12, weight: .semibold))
-            .foregroundStyle(tint)
+            .font(.caption.weight(.semibold))
+            .foregroundStyle(ink)
+            .frame(minWidth: 44, minHeight: 44)
+            .padding(.horizontal, 8)
+            .background(BotTint.inset, in: Capsule())
         }
         .foregroundStyle(Color.secondary)
     }

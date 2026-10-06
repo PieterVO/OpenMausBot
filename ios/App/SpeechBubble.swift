@@ -10,12 +10,12 @@ struct SpeechBubble: Shape {
     enum Tail { case none, leading, trailing }
 
     var tail: Tail = .none
-    var cornerRadius: CGFloat = 22
+    var cornerRadius: CGFloat = 20
 
     /// How far below the bubble's bottom edge the tail reaches, so callers can
     /// leave room for it. Depends on the corner radius the same way the tail
     /// does.
-    static func tailDrop(cornerRadius: CGFloat = 22) -> CGFloat {
+    static func tailDrop(cornerRadius: CGFloat = 20) -> CGFloat {
         cornerRadius / referenceCapRadius * referenceTailDrop
     }
 
@@ -85,17 +85,3 @@ struct SpeechBubble: Shape {
     }
 }
 
-/// The two bubble fills. Solid rather than translucent on purpose: the tail
-/// is part of the same fill, and a see-through bubble shows the seam.
-enum BubbleColor {
-    /// What you said. The mascot palette's blue, not the system's.
-    static let mine = MausPalette.color("blue")
-    static let mineText = Color.white
-
-    /// What a bot said. Near-black on dark, a soft grey on light.
-    static let theirs = Color(uiColor: UIColor { trait in
-        trait.userInterfaceStyle == .dark
-            ? UIColor(red: 0.149, green: 0.149, blue: 0.161, alpha: 1)   // #262629
-            : UIColor(red: 0.914, green: 0.914, blue: 0.922, alpha: 1)   // #E9E9EB
-    })
-}

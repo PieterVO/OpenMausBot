@@ -59,12 +59,13 @@ final class ChatPreferencesTests: XCTestCase {
         XCTAssertEqual(activity("b").tool?.label, "run")
     }
 
-    // The digest and compaction receipts are the harness talking about the
-    // tool calls: hidden with them, but never folded into a run of them.
+    // Context receipts still follow tool detail. Successful work summaries
+    // start off independently, but can be enabled even at Hidden.
 
-    func testHiddenDropsDigestAndCompactionReceiptsToo() {
+    func testHiddenDropsCompactionAndDefaultOffDigests() {
         let messages = [text("a"), activity("b"), digest("c"), text("d"), compaction("e")]
         XCTAssertEqual(transcriptRows(messages, detail: .hidden).map(\.id), ["a", "d"])
+        XCTAssertEqual(transcriptRows(messages, detail: .hidden, showSummaries: true).map(\.id), ["a", "c", "d"])
     }
 
     func testReducedKeepsACompactionAsItsOwnRowAndBreaksTheRun() {
@@ -218,24 +219,25 @@ final class ChatPreferencesTests: XCTestCase {
 
     // MARK: - Digests
 
-    // The harness writes a "[digest] · tools: … · reply: …" receipt after
-    // every turn. Drawn as a bubble it was a log line under every reply;
-    // dropped, the one record of what a turn touched was gone. It is its
-    // own row — a chip — beside the tool chips it sums up, never among them.
-    func testADigestIsItsOwnRowAtFullAndReduced() {
+    // A digest remains its own row when summaries are enabled, independent
+    // of the activity setting, and is never counted as another step.
+    func testAnEnabledDigestIsItsOwnRowAtEveryDetailLevel() {
         let messages = [text("a"), activity("b"), digest("c"), text("d"), digest("e")]
-        XCTAssertEqual(transcriptRows(messages, detail: .full).map(\.id), ["a", "b", "c", "d", "e"])
-        XCTAssertEqual(transcriptRows(messages, detail: .reduced).map(\.id), ["a", "b", "c", "d", "e"])
+        XCTAssertEqual(transcriptRows(messages, detail: .full, showSummaries: true).map(\.id), ["a", "b", "c", "d", "e"])
+        XCTAssertEqual(transcriptRows(messages, detail: .reduced, showSummaries: true).map(\.id), ["a", "b", "c", "d", "e"])
+        XCTAssertEqual(transcriptRows(messages, detail: .hidden, showSummaries: true).map(\.id), ["a", "c", "d", "e"])
     }
 
-    func testADigestIsHiddenWithTheActivityItSummarises() {
+    func testSuccessfulDigestsDefaultOffAtEveryDetailLevel() {
         let messages = [text("a"), activity("b"), digest("c"), text("d"), digest("e")]
         XCTAssertEqual(transcriptRows(messages, detail: .hidden).map(\.id), ["a", "d"])
+        XCTAssertEqual(transcriptRows(messages, detail: .full).map(\.id), ["a", "b", "d"])
+        XCTAssertEqual(transcriptRows(messages, detail: .reduced).map(\.id), ["a", "b", "d"])
     }
 
     func testADigestIsNeverFoldedIntoARunOfActivity() {
         let messages = [activity("a"), activity("b"), digest("c"), activity("d"), activity("e")]
-        let rows = transcriptRows(messages, detail: .reduced)
+        let rows = transcriptRows(messages, detail: .reduced, showSummaries: true)
         XCTAssertEqual(rows.map(\.id), ["run.a", "c", "run.d"])
         guard case let .message(receipt) = rows[1] else { return XCTFail("digest should be a message row") }
         XCTAssertEqual(receipt.kind, .digest)
@@ -246,10 +248,12 @@ final class ChatPreferencesTests: XCTestCase {
         }
     }
 
-    // A turn that touched nothing has nothing for the chip to open.
+    // A turn that touched nothing has nothing for the summary to open.
     func testADigestWithNothingDoneIsNotARow() {
         var quiet = digest("c")
         quiet.text = "[digest] · no tool calls · reply: Hi there."
-        XCTAssertEqual(transcriptRows([text("a"), quiet], detail: .full).map(\.id), ["a"])
+        for detail in ActivityDetail.allCases {
+            XCTAssertEqual(transcriptRows([text("a"), quiet], detail: detail, showSummaries: true).map(\.id), ["a"])
+        }
     }
 }

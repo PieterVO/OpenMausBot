@@ -119,14 +119,16 @@ public enum TranscriptRow: Identifiable, Hashable, Sendable {
     case message(Message)
     case activityRun([Message])
     case assistantTurn(AssistantTurnFold)
+    case plan(id: String, message: Message, plan: TodoPlan)
 
-    /// The message a row answers for — its first, which is the one whose
-    /// time and sender the transcript reads.
+    /// The message a row answers for. A plan answers for its latest update,
+    /// while its stable id keeps it at the first update's transcript position.
     public var head: Message {
         switch self {
         case let .message(message): message
         case let .activityRun(items): items[0]
         case let .assistantTurn(turn): turn.messages[0]
+        case let .plan(_, message, _): message
         }
     }
 
@@ -135,6 +137,7 @@ public enum TranscriptRow: Identifiable, Hashable, Sendable {
         case let .message(message): message.id
         case let .activityRun(items): "run.\(items[0].id)"
         case let .assistantTurn(turn): "turn.\(turn.turnId)"
+        case let .plan(id, _, _): id
         }
     }
 
@@ -146,6 +149,7 @@ public enum TranscriptRow: Identifiable, Hashable, Sendable {
         case let .message(message): message.at
         case let .activityRun(items): items.last?.at ?? head.at
         case let .assistantTurn(turn): turn.messages.last?.at ?? head.at
+        case let .plan(_, message, _): message.at
         }
     }
     public var role: Message.Role { head.role }
@@ -161,10 +165,20 @@ public enum TranscriptRow: Identifiable, Hashable, Sendable {
 /// on the screen they spend the most time on. Reading the preview off the
 /// raw last message made "Hidden" mean "hidden in one place".
 public func rosterPreview(_ messages: [Message], detail: ActivityDetail) -> String {
-    // The digest is a row in the chat now, as a chip, but never the line
-    // under a chat's name: it follows every reply, so it would be the
-    // preview of every chat and say nothing about any of them.
-    let messages = messages.filter { $0.kind != .digest }
+    // Cards change conversation semantics, not the roster's activity policy.
+    // A plan-bearing activity still hides here when tool detail is Hidden.
+    let messages = messages.filter {
+        $0.kind != .digest && (detail != .hidden || ($0.kind != .activity && $0.kind != .compaction) || isStatusNotice($0) || isFailedTurn($0))
+    }
+    // The card stays at its first update's position. A later update can still
+    // be the newest activity for a preview, even after an intervening reply.
+    if let last = messages.last, last.kind == .activity, let tool = last.tool {
+        let name = tool.name.lowercased()
+        if TodoPlan.parse(tool: tool) != nil ||
+            ((name.hasSuffix("taskcreate") || name.hasSuffix("taskupdate")) && planStates(messages)[last.id] != nil) {
+            return previewText(of: last)
+        }
+    }
     guard let last = transcriptRows(messages, detail: detail).last else { return "" }
     switch last {
     case let .message(message):
@@ -174,6 +188,8 @@ public func rosterPreview(_ messages: [Message], detail: ActivityDetail) -> Stri
         return "\(running ? "Running" : "Ran") \(items.count) steps"
     case let .assistantTurn(turn):
         return turn.label
+    case let .plan(_, message, _):
+        return previewText(of: message)
     }
 }
 
@@ -201,10 +217,6 @@ func previewText(of message: Message) -> String {
     }
 }
 
-/// Rows the harness writes about a turn rather than in it: tool chips and,
-/// since Phase 0, the digest and compaction receipts. Hidden together,
-/// because a reader who turned activity off does not want the summary of
-/// exactly those calls either.
 /// A status row the server writes while a turn runs ("notice: Qwen hit a
 /// rate limit and is retrying"). It tells the reader what the bot is doing,
 /// so, like desktop's statusActivity, it is never hidden or folded with the
@@ -233,9 +245,15 @@ extension ToolActivity {
     public var label: String { failedTurnCause(name) ?? name }
 }
 
+/// Tool and context receipts follow activity detail. Plans and digests have
+/// their own conversation policy and are handled before this hiding rule.
 public func isActivityReceipt(_ message: Message) -> Bool {
     switch message.kind {
-    case .activity, .digest, .compaction: return true
+    case .activity:
+        guard let tool = message.tool else { return true }
+        let name = tool.name.lowercased()
+        return TodoPlan.parse(tool: tool) == nil && !name.hasSuffix("taskcreate") && !name.hasSuffix("taskupdate")
+    case .compaction: return true
     default: return false
     }
 }
@@ -276,10 +294,27 @@ public func liveNarration(_ messages: [Message], busy: Bool, detail: ActivityDet
 /// the successful noise, and losing the one chip that says something went
 /// wrong would make `reduced` a worse default than `full`.
 ///
-/// A digest is a row of its own, drawn as a chip: never folded into a run
-/// of the tool chips it summarises, never counted as one of their steps,
-/// and gone with them when activity is hidden.
-public func transcriptRows(_ messages: [Message], detail: ActivityDetail) -> [TranscriptRow] {
+/// Plans remain visible at every detail level. Work summaries are independent
+/// of tool detail: off by default, but always available after a problem.
+public func transcriptRows(_ messages: [Message], detail: ActivityDetail, showSummaries: Bool = false) -> [TranscriptRow] {
+    enum PlanGroup: Hashable {
+        case turn(String)
+        case afterUser(String?)
+    }
+    let states = planStates(messages)
+    var planGroups: [PlanGroup: (firstID: String, message: Message, plan: TodoPlan)] = [:]
+    var latestUserID: String?
+    for message in messages {
+        if message.role == .user { latestUserID = message.id }
+        guard let plan = states[message.id] else { continue }
+        let group = message.turnId.map(PlanGroup.turn) ?? .afterUser(latestUserID)
+        let firstID = planGroups[group]?.firstID ?? message.id
+        planGroups[group] = (firstID, message, plan)
+    }
+    var plans: [String: TranscriptRow] = [:]
+    for group in planGroups.values {
+        plans[group.firstID] = .plan(id: "plan.\(group.firstID)", message: group.message, plan: group.plan)
+    }
     // Fold only explicitly completed turns; never guess that the last reply
     // is final on an older server or while the bot is still working.
     var narration: [String: [Message]] = [:]
@@ -324,10 +359,20 @@ public func transcriptRows(_ messages: [Message], detail: ActivityDetail) -> [Tr
             continue
         }
         if hiddenIDs.contains(message.id) { continue }
-        if detail == .hidden && isActivityReceipt(message) && !isStatusNotice(message) && !isFailedTurn(message) { continue }
-        // A turn that touched nothing leaves a digest with nothing to show;
-        // an empty row would still cost the transcript a gap.
-        if message.kind == .digest && DigestSummary(text: message.text ?? "").isEmpty { continue }
+        if states[message.id] != nil {
+            // Even later updates that do not emit a second card break runs.
+            flush()
+            if let row = plans[message.id] { rows.append(row) }
+            continue
+        }
+        if message.kind == .digest {
+            flush()
+            if shouldShowDigest(message, showSummaries: showSummaries) {
+                rows.append(.message(message))
+            }
+            continue
+        }
+        if detail == .hidden && (message.kind == .activity || message.kind == .compaction) && !isStatusNotice(message) && !isFailedTurn(message) { continue }
         if detail != .reduced {
             rows.append(.message(message))
             continue

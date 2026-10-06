@@ -30,7 +30,8 @@ struct QuestionCardView: View {
     @State private var sent: String?
     @FocusState private var otherFocused: Bool
 
-    private var tint: Color { MausPalette.color(chat.color) }
+    private var color: String? { message.from?.color ?? chat.color }
+    private var tint: Color { BotTint.ink(color) }
 
     private var card: OptionCard? { message.card }
     private var questions: [AskQuestion] { card?.questions ?? [] }
@@ -59,20 +60,20 @@ struct QuestionCardView: View {
                 header(card)
                 if card.questionRequest?.origin == "output" {
                     Text("Agent-composed question")
-                        .font(.system(size: 12))
+                        .font(.caption)
                         .foregroundStyle(Color.secondary)
                 }
                 if questions.count > 1 { tabs }
                 if let current {
                     Text(current.question)
-                        .font(.system(size: 15))
+                        .font(.body)
                         .foregroundStyle(Color.primary)
                         .textSelection(.enabled)
                         .fixedSize(horizontal: false, vertical: true)
                     if !settled {
                         if current.allowsMultiple {
                             Text("Choose all that apply")
-                                .font(.system(size: 12))
+                                .font(.caption)
                                 .foregroundStyle(Color.secondary)
                         }
                         choices(current)
@@ -86,14 +87,8 @@ struct QuestionCardView: View {
             }
             .padding(14)
             .frame(maxWidth: .infinity, alignment: .leading)
-            .background(
-                RoundedRectangle(cornerRadius: 22, style: .continuous)
-                    .fill(settled ? Color.secondary.opacity(0.13) : tint.opacity(0.12))
-            )
-            .overlay {
-                RoundedRectangle(cornerRadius: 22, style: .continuous)
-                    .strokeBorder(settled ? .clear : tint, lineWidth: 1.5)
-            }
+            .background(BotTint.theirs(color), in: RoundedRectangle(cornerRadius: 20, style: .continuous))
+            .tint(tint)
         }
     }
 
@@ -101,12 +96,12 @@ struct QuestionCardView: View {
     private func header(_ card: OptionCard) -> some View {
         HStack(alignment: .firstTextBaseline) {
             Label("\(chat.name) has a question", systemImage: "questionmark.bubble.fill")
-                .font(.system(size: 13, weight: .semibold))
+                .font(.subheadline.weight(.semibold))
                 .foregroundStyle(settled ? Color.secondary : tint)
             Spacer(minLength: 8)
             if questions.count > 1, !settled {
                 Text("\(answeredCount) of \(questions.count)")
-                    .font(.system(size: 12).monospacedDigit())
+                    .font(.caption).monospacedDigit()
                     .foregroundStyle(Color.secondary)
             }
         }
@@ -123,15 +118,15 @@ struct QuestionCardView: View {
                         HStack(spacing: 4) {
                             if isAnswered(position) {
                                 Image(systemName: "checkmark")
-                                    .font(.system(size: 10, weight: .bold))
+                                    .font(.caption.weight(.bold))
                             }
                             Text(question.tabLabel(position: position + 1))
-                                .font(.system(size: 13, weight: position == index ? .semibold : .regular))
+                                .font(.subheadline.weight(position == index ? .semibold : .regular))
                         }
                         .padding(.horizontal, 10)
-                        .padding(.vertical, 5)
+                        .frame(minHeight: 44)
                         .background(
-                            Capsule().fill(position == index ? Color.secondary.opacity(0.22) : Color.clear)
+                            Capsule().fill(position == index ? BotTint.inset : Color.clear)
                         )
                         .foregroundStyle(position == index ? Color.primary : Color.secondary)
                     }
@@ -164,7 +159,7 @@ struct QuestionCardView: View {
             if other.contains(index) {
                 Divider().opacity(0.4)
                 TextField("Type your own answer", text: binding(forCustom: index), axis: .vertical)
-                    .font(.system(size: 15))
+                    .font(.body)
                     .lineLimit(1...4)
                     .focused($otherFocused)
                     .textFieldStyle(.plain)
@@ -173,7 +168,7 @@ struct QuestionCardView: View {
             }
         }
         .background(
-            RoundedRectangle(cornerRadius: 14, style: .continuous).fill(Color.secondary.opacity(0.10))
+            RoundedRectangle(cornerRadius: 12, style: .continuous).fill(BotTint.inset)
         )
     }
 
@@ -191,16 +186,16 @@ struct QuestionCardView: View {
         }) {
             HStack(alignment: .top, spacing: 10) {
                 Image(systemName: marker(checked: checked, multi: multi))
-                    .font(.system(size: 17))
+                    .font(.body)
                     .foregroundStyle(checked ? tint : Color.secondary)
                 VStack(alignment: .leading, spacing: 2) {
                     Text(label)
-                        .font(.system(size: 15, weight: .medium))
+                        .font(.body.weight(.medium))
                         .foregroundStyle(Color.primary)
                         .fixedSize(horizontal: false, vertical: true)
                     if let detail, !detail.isEmpty {
                         Text(detail)
-                            .font(.system(size: 13))
+                            .font(.subheadline)
                             .foregroundStyle(Color.secondary)
                             .fixedSize(horizontal: false, vertical: true)
                     }
@@ -209,6 +204,7 @@ struct QuestionCardView: View {
             }
             .padding(.horizontal, 12)
             .padding(.vertical, 10)
+            .frame(minHeight: 44)
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
@@ -227,11 +223,12 @@ struct QuestionCardView: View {
             send()
         } label: {
             Text(questions.count > 1 ? "Submit answers" : "Submit answer")
-                .font(.system(size: 15, weight: .semibold))
-                .foregroundStyle(.white)
+                .font(.body.weight(.semibold))
+                .foregroundStyle(complete ? BotTint.actionLabel(color) : .secondary)
                 .frame(maxWidth: .infinity)
-                .frame(height: 40)
-                .background(Capsule().fill(complete ? tint : Color.secondary.opacity(0.35)))
+                .padding(.horizontal, 12).padding(.vertical, 10)
+                .frame(minHeight: 44)
+                .background(Capsule().fill(complete ? tint : BotTint.inset))
         }
         .buttonStyle(.plain)
         .disabled(!complete || answering)
@@ -243,7 +240,7 @@ struct QuestionCardView: View {
         let answer = card.answeredText ?? sent
         Label {
             Text(answer.map(AskQuestionAnswer.withoutPreamble) ?? String(localized: "Answered"))
-                .font(.system(size: 14))
+                .font(.body)
                 .textSelection(.enabled)
                 .fixedSize(horizontal: false, vertical: true)
         } icon: {
