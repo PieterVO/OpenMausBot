@@ -179,7 +179,7 @@ class ChatShowcaseScreenshotTest {
             }
         } }
         compose.runOnIdle { scene.session.connect() }
-        compose.waitUntil(5000) { scene.session.state.value.bot(fixture.id) != null && scene.session.state.value.reasoning[fixture.threadId] != null }
+        compose.waitForStream { scene.session.state.value.bot(fixture.id) != null && scene.session.state.value.reasoning[fixture.threadId] != null }
         compose.waitForIdle()
         fixture.messages!!.filter { it.role == Message.Role.USER }.forEach { message ->
             Assert.assertEquals(1, scene.session.state.value.versions(message, fixture.threadId).size)
@@ -194,7 +194,7 @@ class ChatShowcaseScreenshotTest {
             updates.tryEmit(StreamFrame(Frame.Runtime(RuntimeEvent("content.delta", fixture.threadId,
                 "\n\nThe afternoon train is on time, and the station has step-free access.", "reasoning_text")), seq = 3))
         }
-        compose.waitUntil(5000) { scene.session.state.value.reasoning[fixture.threadId]?.contains("step-free access") == true }
+        compose.waitForStream { scene.session.state.value.reasoning[fixture.threadId]?.contains("step-free access") == true }
         compose.onNodeWithTag("jump-to-latest-face", useUnmergedTree = true).assertIsDisplayed()
         Assert.assertEquals(frozenOffset, compose.onNodeWithTag("chat-transcript").fetchSemanticsNode().config[androidx.compose.ui.semantics.SemanticsProperties.VerticalScrollAxisRange].value())
         capture("showcase-jump-$suffix")

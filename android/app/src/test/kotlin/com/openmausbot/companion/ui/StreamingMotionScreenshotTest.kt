@@ -356,7 +356,7 @@ class StreamingMotionScreenshotTest {
             }
         }
         // Waiting for network/state work must never advance animation time.
-        compose.waitUntil(5_000) { scene.session.state.value.cursor == "motion:$sequence" }
+        compose.waitForStream { scene.session.state.value.cursor == "motion:$sequence" }
     }
 
     private fun settle(text: String) {

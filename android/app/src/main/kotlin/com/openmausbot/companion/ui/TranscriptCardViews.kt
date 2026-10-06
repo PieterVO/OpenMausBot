@@ -470,6 +470,7 @@ internal fun tableGridMeasurePolicy(
 }
 
 
+
 /** Hide/View, announced as the disclosure it is. */
 @Composable
 private fun Disclosure(expanded: Boolean, label: String, onToggle: () -> Unit) {
@@ -480,7 +481,7 @@ private fun Disclosure(expanded: Boolean, label: String, onToggle: () -> Unit) {
             .clip(RoundedCornerShape(8.dp))
             .clickable(
                 role = Role.Button,
-                onClickLabel = if (expanded) "Collapse" else "Expand",
+                onClickLabel = stringResource(if (expanded) R.string.mobile_collapse_9cf188d3 else R.string.mobile_expand_9869e506),
                 onClick = onToggle,
             )
             .localizedSemantics(stateDescription = {

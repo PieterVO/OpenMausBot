@@ -33,6 +33,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
@@ -40,6 +41,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.openmausbot.companion.R
 import com.openmausbot.companion.core.Message
 import com.openmausbot.companion.core.RoutineRunTone
 import com.openmausbot.companion.core.TurnDigest
@@ -89,7 +91,7 @@ internal fun RoutineRunCardView(message: Message, openRun: (() -> Unit)?) {
         ) {
             Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
                 Text(
-                    run.routineName.ifBlank { "Routine" },
+                    run.routineName.ifBlank { stringResource(R.string.mobile_routine_run_untitled) },
                     fontSize = 15.sp,
                     fontWeight = FontWeight.SemiBold,
                     maxLines = 1,
@@ -144,7 +146,7 @@ internal fun RoutineRunCardView(message: Message, openRun: (() -> Unit)?) {
             }
             if (overflows || expanded) {
                 Text(
-                    if (expanded) "Show less" else "Show report",
+                    stringResource(if (expanded) R.string.mobile_routine_run_show_less else R.string.mobile_routine_run_show_report),
                     fontSize = 13.sp,
                     fontWeight = FontWeight.Medium,
                     color = MaterialTheme.colorScheme.primary,
@@ -166,4 +168,5 @@ internal fun RoutineRunCardView(message: Message, openRun: (() -> Unit)?) {
         }
     }
 }
+
 

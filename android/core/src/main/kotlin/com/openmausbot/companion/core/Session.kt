@@ -935,33 +935,37 @@ class Session(
                         return
                     }
                 }
+                // Frames arrive in windows (`inBatches`): a busy fleet sends
+                // about seventy a second, and one publish per frame kept the
+                // home list re-deriving on nearly every drawn frame.
                 eventsFn(activeClient, cursor, screenWatchers > 0)
-                    .collect { frame ->
+                    .inBatches()
+                    .collect { batch ->
                         currentCoroutineContext().ensureActive()
 
-                        when (val payload = frame.frame) {
-                            is Frame.Hello -> {
-                                receivedHello = true
-                                if (!payload.resumed) {
-                                    hydrate(generation)
-                                    _state.update { it.resetCursor(payload.cursor) }
-                                }
-                                _status.value = Status.Live
-                                promoteWorkingRoute()
-                                refreshConnectionMetadata(activeClient)
+                        val first = batch.first()
+                        val hello = first.frame as? Frame.Hello
+                        if (hello != null) {
+                            receivedHello = true
+                            if (!hello.resumed) {
+                                hydrate(generation)
+                                _state.update { it.resetCursor(hello.cursor) }
                             }
-                            else -> {
-                                // A frame after hello is the stream working. Only that
-                                // resets the backoff, so hello-then-close slows down.
-                                reconnectDelaySeconds = 0
-                                framesAfterHello += 1
-                                _state.update { it.apply(frame) }
-                                if (payload is Frame.Notify) {
-                                    notificationSink.deliver(payload.notification, frame.seq)
+                            _status.value = Status.Live
+                            promoteWorkingRoute()
+                            refreshConnectionMetadata(activeClient)
+                        } else {
+                            // A frame after hello is the stream working. Only that
+                            // resets the backoff, so hello-then-close slows down.
+                            reconnectDelaySeconds = 0
+                            framesAfterHello += batch.size
+                            _state.update { state -> batch.fold(state) { next, frame -> next.apply(frame).advance(frame.seq) } }
+                            batch.forEach { frame ->
+                                (frame.frame as? Frame.Notify)?.let {
+                                    notificationSink.deliver(it.notification, frame.seq)
                                 }
-                                notificationSink.setBadge(_state.value.unreadCount)
-                                _state.update { it.advance(frame.seq) }
                             }
+                            notificationSink.setBadge(_state.value.unreadCount)
                         }
                     }
                 // A live stream may close normally and should reopen on the working route.
@@ -1616,6 +1620,39 @@ class Session(
                 message = choice.takeIf { behavior == "answer" },
                 reviewedSha256 = reviewedSha256.takeIf { behavior == "allow" },
             )
+        }
+    }
+
+    /**
+     * A question answered in words, from its card's field or the composer:
+     * the same respond route the card's buttons use, but reporting back so
+     * the caller can keep the words when they did not land.
+     */
+    suspend fun answerInWords(chat: Chat, card: OptionCard, answer: String): TypedAnswerResult {
+        val activeClient = client ?: return TypedAnswerResult.Failed("This computer is offline.")
+        val requestId = card.requestId ?: return TypedAnswerResult.Gone
+        val connectionId = _connection.value?.id
+        return try {
+            val outcome = activeClient.respond(
+                threadId = chat.threadId,
+                requestId = requestId,
+                behavior = "answer",
+                message = answer,
+            )
+            if (outcome == "unavailable") TypedAnswerResult.Gone else TypedAnswerResult.Answered
+        } catch (error: CancellationException) {
+            throw error
+        } catch (error: APIError) {
+            if (error.isUnauthorized) {
+                gate.withLock {
+                    if (connectionId != null && _connection.value?.id == connectionId) {
+                        _status.value = Status.Unauthorized
+                    }
+                }
+            }
+            TypedAnswerResult.Failed(error.message ?: "Couldn't send this message. Try again.")
+        } catch (error: Throwable) {
+            TypedAnswerResult.Failed(error.message ?: "Couldn't send this message. Try again.")
         }
     }
 
@@ -2457,6 +2494,21 @@ class PairingInProgressException : IllegalStateException("Another pairing attemp
 class SpentPairingCredentialException : IllegalStateException(Session.SPENT_QR_MESSAGE)
 
 /** What became of an in-chat Claude Code update. */
+/** What became of an answer typed in words. */
+sealed interface TypedAnswerResult {
+    /** The computer took it as the answer; the card settles with it. */
+    data object Answered : TypedAnswerResult
+
+    /**
+     * The question went away first and took nothing. The words are still the
+     * person's to send as an ordinary message.
+     */
+    data object Gone : TypedAnswerResult
+
+    /** Not delivered (offline, refused). Carries what to show. */
+    data class Failed(val message: String) : TypedAnswerResult
+}
+
 sealed interface ClaudeUpdateResult {
     data class Updated(val version: String) : ClaudeUpdateResult
     data class Failed(val message: String) : ClaudeUpdateResult

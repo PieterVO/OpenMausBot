@@ -8,6 +8,7 @@ import { soulSystemPrompt } from "./bot-folder.ts";
 import { BUILT_IN_BROWSER_SYSTEM_PROMPT } from "./browser-engine.ts";
 import {
   buildSystemPrompt,
+  CLOUD_HOME_PLACE,
   cloudHomePrompt,
   userProfileSystemPrompt,
   computerPrompt,
@@ -36,25 +37,20 @@ describe("resolveComputerPromptKind", () => {
   // agreement matrix artifact.
   it.each([
     // a VM plan is decided by the configured mode alone
-    [{ kind: "vm", driverKind: "claude", vmPrivate: false, vmSpaceOs: null }, "vm-shared"],
-    [{ kind: "vm", driverKind: "claude", vmPrivate: true, vmSpaceOs: null }, "vm-private"],
-    [{ kind: "vm", driverKind: "boxAgent", vmPrivate: false, vmSpaceOs: null }, "vm-shared"],
+    [{ kind: "vm", vmPrivate: false, vmSpaceOs: null }, "vm-shared"],
+    [{ kind: "vm", vmPrivate: true, vmSpaceOs: null }, "vm-private"],
     // …unless the Local VM is a Cua Space: then its OS decides, in any mode
-    [{ kind: "vm", driverKind: "claude", vmPrivate: true, vmSpaceOs: "linux" }, "space-linux"],
-    [{ kind: "vm", driverKind: "claude", vmPrivate: false, vmSpaceOs: "macos" }, "space-macos"],
+    [{ kind: "vm", vmPrivate: true, vmSpaceOs: "linux" }, "space-linux"],
+    [{ kind: "vm", vmPrivate: false, vmSpaceOs: "macos" }, "space-macos"],
     // a Space OS never turns another place into a VM paragraph
-    [{ kind: "local", driverKind: "claude", vmPrivate: false, vmSpaceOs: "macos" }, "local"],
-    // a boat plan: the Computer engine earns its own kind; every other
-    // engine drives the boat through the same computer tools
-    [{ kind: "box", driverKind: "boxAgent", vmPrivate: false, vmSpaceOs: null }, "box-agent"],
-    [{ kind: "box", driverKind: "codex", vmPrivate: false, vmSpaceOs: null }, "box"],
-    [{ kind: "box", driverKind: "claude", vmPrivate: false, vmSpaceOs: null }, "box"],
+    [{ kind: "local", vmPrivate: false, vmSpaceOs: "macos" }, "local"],
+    // a boat plan: every engine drives the boat through the same computer tools
+    [{ kind: "box", vmPrivate: false, vmSpaceOs: null }, "box"],
     // vps and local never depended on more than the plan
-    [{ kind: "vps", driverKind: "claude", vmPrivate: false, vmSpaceOs: null }, "vps"],
-    [{ kind: "local", driverKind: "claude", vmPrivate: false, vmSpaceOs: null }, "local"],
-    [{ kind: "local", driverKind: "boxAgent", vmPrivate: false, vmSpaceOs: null }, "local"],
+    [{ kind: "vps", vmPrivate: false, vmSpaceOs: null }, "vps"],
+    [{ kind: "local", vmPrivate: false, vmSpaceOs: null }, "local"],
     // and no plan earns no paragraph
-    [{ kind: null, driverKind: "claude", vmPrivate: true, vmSpaceOs: null }, null],
+    [{ kind: null, vmPrivate: true, vmSpaceOs: null }, null],
   ] as const)("resolves %j to %s", (input, expected) => {
     expect(resolveComputerPromptKind(input)).toBe(expected);
   });
@@ -63,9 +59,6 @@ describe("resolveComputerPromptKind", () => {
 describe("computerPrompt", () => {
   it("gives every kind its own paragraph plus the sign-in policy, and silence to none", () => {
     expect(computerPrompt(null)).toBe("");
-    // the boat agent already lives on the computer: no paragraph, only the
-    // shared sign-in policy still applies
-    expect(computerPrompt("box-agent")).toBe(SIGN_IN_PROMPT);
     const paragraphs: Record<string, string> = {
       "vm-private": "your own isolated Cua sandbox",
       "vm-shared": "shared, isolated Cua sandbox",
@@ -191,7 +184,6 @@ describe("computerPrompt", () => {
       expect(computerPrompt(kind).endsWith(SIGN_IN_PROMPT)).toBe(true);
       expect(computerPrompt(kind).startsWith(" ")).toBe(true);
     }
-    expect(computerPrompt("box-agent")).toBe(SIGN_IN_PROMPT);
     expect(BUILT_IN_BROWSER_SYSTEM_PROMPT.endsWith(SIGN_IN_PROMPT)).toBe(true);
   });
 
@@ -285,6 +277,8 @@ describe("cloudHomePrompt", () => {
     for (const tools of [true, false]) {
       const text = cloudHomePrompt(tools);
       expect(text).toMatch(/^ You run on the user's My Cloud, their always-on OpenMausBot in the cloud, not on their own computer\./);
+      // the same words the Live call's voice is told (server/live-call.ts)
+      expect(text.startsWith(` You run on ${CLOUD_HOME_PLACE}.`)).toBe(true);
       expect(text).toContain("Offer what works here: the built-in browser and their cloud computer, a desktop in the cloud. Call it their cloud computer, as the app does.");
       expect(text).not.toMatch(/\bOMB\b|\bBoat\b|\bbox\b/);
       expect(text).toContain("Never ask them to set up this computer or a Local VM; neither exists here.");

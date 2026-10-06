@@ -269,8 +269,15 @@ struct MarkdownText: View {
     /// is laid out on every frame, and measuring every cell each time was a
     /// visible share of the main thread.
     private func columnWidths(_ table: MarkdownTable) -> [CGFloat] {
-        let key = ([sizeCategory.uiCategory.rawValue] + table.headers + table.rows.flatMap { $0 + ["\u{1}"] })
-            .joined(separator: "\u{2}") as NSString
+        // Built step by step: as one chained expression the type checker
+        // spent half a second on it.
+        var parts: [String] = [sizeCategory.uiCategory.rawValue]
+        parts += table.headers
+        for row in table.rows {
+            parts += row
+            parts.append("\u{1}")
+        }
+        let key = parts.joined(separator: "\u{2}") as NSString
         if let cached = Self.widthCache.object(forKey: key) { return cached.widths }
         let widths = table.headers.indices.map { index in
             var widest = textWidth(table.headers[index], weight: .semibold)

@@ -129,6 +129,8 @@ import com.openmausbot.companion.core.AttachmentPolicy
 import com.openmausbot.companion.core.Bot
 import com.openmausbot.companion.core.Chat
 import com.openmausbot.companion.core.ComposerMention
+import com.openmausbot.companion.core.ComposerQuestion
+import com.openmausbot.companion.core.TypedAnswerResult
 import com.openmausbot.companion.core.MentionChoice
 import com.openmausbot.companion.core.ChatTarget
 import com.openmausbot.companion.core.LocalMessageLink
@@ -573,6 +575,12 @@ private fun LoadedChat(
     val pendingApproval = remember(rawTranscript) {
         ComposerAccessories.hasPendingApproval(rawTranscript)
     }
+    // The one open question a typed line answers. A bot blocked on its
+    // question never reads a line steered into its turn, so while exactly one
+    // question waits (and nothing is attached) Send answers it instead.
+    val composerQuestion = remember(rawTranscript, chat.name, attachments.isEmpty()) {
+        ComposerQuestion.target(rawTranscript, chat.name, hasAttachments = attachments.isNotEmpty())
+    }
 
     // One live composer per thread, including when an upload finishes after
     // switching away and back. Only typed text enters saved instance state;
@@ -886,6 +894,44 @@ private fun LoadedChat(
             return
         }
         if (text.isEmpty()) return
+        // Only the typed line answers; a chip or a command is its own ask.
+        val question = composerQuestion.takeIf { explicitText == null }
+        if (question != null) {
+            if (sendingMessage) return
+            val target = composer
+            sendingMessage = true
+            attachmentError = null
+            composer.onSend()
+            publishFrom(composer)
+            haptics.play(HapticCue.SEND)
+            scope.launch {
+                val result = try {
+                    session.answerInWords(chat, question.card, question.answer(text))
+                } finally {
+                    sendingMessage = false
+                }
+                when (result) {
+                    TypedAnswerResult.Answered -> Unit
+                    // The question closed before the line reached it: say it
+                    // as an ordinary message rather than lose it.
+                    TypedAnswerResult.Gone -> {
+                        if (!session.send(text, emptyList(), chat) && target.text.isBlank()) {
+                            target.onTypedChange(text)
+                            publishFrom(target)
+                        }
+                    }
+                    // Hand the words back, with the reason under them.
+                    is TypedAnswerResult.Failed -> {
+                        if (target.text.isBlank()) {
+                            target.onTypedChange(text)
+                            publishFrom(target)
+                        }
+                        attachmentError = result.message
+                    }
+                }
+            }
+            return
+        }
         composer.onSend()
         // Clearing the draft closes the HUD through the rule above, which is
         // how iOS's `showCommandHUD = false` on submit happens as well.
@@ -1078,7 +1124,7 @@ private fun LoadedChat(
                                 // Pacing already grows the text; interpolating its measured
                                 // height would leave the newest ink outside the pinned row.
                                 (fadeIn() togetherWith fadeOut()).using(SizeTransform(clip = false) { _, _ -> androidx.compose.animation.core.snap() })
-                            }, label = "Typing to reply") { working ->
+                            }) { working ->
                                 if (working) WorkingBubble(name = chat.name, color = chat.color)
                                 else StreamingBubble(text = liveText, reasoning = liveReasoning)
                             }
@@ -1206,6 +1252,7 @@ private fun LoadedChat(
                 preparing = preparingAttachments,
                 busy = chat.busy,
                 engineCanSteer = engineCanSteer,
+                questionAsker = composerQuestion?.asker,
                 queuedSends = queuedSends,
                 steering = steering,
                 onSteer = steerNow,
@@ -1506,7 +1553,7 @@ private fun ChatHeader(
                 if (showCall) {
                     ChromeButton(
                         icon = Icons.Filled.Call,
-                        contentDescription = "Call ${chat.name}",
+                        contentDescription = stringResource(R.string.mobile_chat_call_bot, chat.name),
                         onClick = onCall,
                     )
                     Spacer(Modifier.width(8.dp))
@@ -1923,6 +1970,8 @@ private fun Composer(
     preparing: Boolean,
     busy: Boolean,
     engineCanSteer: Boolean,
+    /** The bot waiting on the one open question Send would answer. */
+    questionAsker: String?,
     queuedSends: List<QueuedSend>,
     steering: Boolean,
     onSteer: (() -> Unit)?,
@@ -1976,7 +2025,7 @@ private fun Composer(
         // What is in flight, in the order iOS stacks them: the send or the
         // import, then a file on its way, then whatever went wrong.
         if (inFlight) {
-            ComposerStatusLine(if (preparing) "Preparing attachments…" else "Sending…")
+            ComposerStatusLine(stringResource(if (preparing) R.string.mobile_preparing_attachments_343475f3 else R.string.mobile_sending_cf765512))
         }
         if (openingFileName != null) {
             ComposerStatusLine(stringResource(R.string.mobile_chat_opening_file, openingFileName))
@@ -2061,7 +2110,7 @@ private fun Composer(
         ) {
             TouchTarget(
                 onClick = onTogglePlus,
-                contentDescription = if (plusOpen) "Close" else "More",
+                contentDescription = stringResource(if (plusOpen) R.string.mobile_a11y_close else R.string.mobile_more_4bab2d8f),
             ) {
                 Box(
                     modifier = Modifier
@@ -2143,6 +2192,7 @@ private fun Composer(
                                 engineCanSteer = engineCanSteer,
                                 sending = sending,
                                 listening = dictationListening,
+                                questionAsker = questionAsker,
                             )),
                             fontSize = 17.sp,
                             color = secondaryTint,
@@ -2192,7 +2242,7 @@ private fun Composer(
                 // field about 60dp wide. A dictation already running keeps
                 // its mic so it can be stopped.
                 if (stoppable) {
-                    TouchTarget(onClick = onStop, contentDescription = "Stop the current turn") {
+                    TouchTarget(onClick = onStop, contentDescription = stringResource(R.string.mobile_action_stop_turn)) {
                         Box(
                             modifier = Modifier
                                 .size(32.dp)
@@ -2250,7 +2300,9 @@ private fun Composer(
                     ) {
                         Icon(
                             imageVector = Icons.AutoMirrored.Filled.Send,
-                            contentDescription = stringResource(R.string.mobile_send_9bc2575c),
+                            contentDescription = stringResource(
+                                if (questionAsker != null) R.string.mobile_submit_answer_bf80bc31 else R.string.mobile_send_9bc2575c,
+                            ),
                             tint = if (canSend) BubbleColor.mineText else secondaryTint,
                             modifier = Modifier.size(16.dp),
                         )

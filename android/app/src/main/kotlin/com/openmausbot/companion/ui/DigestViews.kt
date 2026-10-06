@@ -106,7 +106,7 @@ internal fun DigestSheet(message: Message, botName: String, color: String, onDis
                     model.files.added.forEach { DigestFile(it, "added", Color(MausPalette.argb("green"))) }
                     model.files.changed.forEach { DigestFile(it, "changed", BubbleColor.mine) }
                     model.files.deleted.forEach { DigestFile(it, "deleted", MaterialTheme.colorScheme.error) }
-                    model.files.truncated?.takeIf { it > 0 }?.let { Text("+$it more", style = MaterialTheme.typography.labelSmall, color = secondaryTint) }
+                    model.files.truncated?.takeIf { it > 0 }?.let { Text(stringResource(R.string.mobile_digest_more_files, it), style = MaterialTheme.typography.labelSmall, color = secondaryTint) }
                 }
                 if (model.tools.isNotEmpty()) DigestSection(localizedMobileCopy("Tools")) {
                     model.tools.forEach { tool -> Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
@@ -114,7 +114,7 @@ internal fun DigestSheet(message: Message, botName: String, color: String, onDis
                             ToolGlyph(toolCategory(tool.name), tint.ink, Modifier.size(18.dp))
                             Text(tool.name, style = MaterialTheme.typography.bodyMedium, modifier = Modifier.weight(1f))
                             Text("×${tool.count}", style = MaterialTheme.typography.labelMedium.copy(fontFeatureSettings = "tnum"))
-                            if (tool.failed > 0) Text("${tool.failed} failed", color = MaterialTheme.colorScheme.error,
+                            if (tool.failed > 0) Text(stringResource(R.string.mobile_digest_tool_failed, tool.failed), color = MaterialTheme.colorScheme.error,
                                 style = MaterialTheme.typography.labelSmall, modifier = Modifier.background(MaterialTheme.colorScheme.error.copy(alpha = 0.1f), CircleShape).padding(horizontal = 8.dp, vertical = 4.dp))
                         }
                         tool.sample?.let { Text(it, style = MaterialTheme.typography.bodySmall, fontFamily = FontFamily.Monospace, color = secondaryTint) }

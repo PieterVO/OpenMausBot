@@ -43,7 +43,7 @@ internal fun PlanCard(row: TranscriptRow.Plan) {
     }
     var expanded by remember(row.id) { mutableStateOf(false) }
     val progress by animateFloatAsState(if (plan.total == 0) 0f else plan.done.toFloat() / plan.total,
-        if (motion) spring(dampingRatio = 0.82f, stiffness = 380f) else snap(), label = "Plan progress")
+        if (motion) spring(dampingRatio = 0.82f, stiffness = 380f) else snap())
     val activeIndex = plan.items.indexOfFirst { it.status == TodoStatus.ACTIVE }
     val start = if (expanded || plan.items.size <= 6) 0 else (activeIndex - 2).coerceIn(0, plan.items.size - 6)
     val visible = if (expanded) plan.items.indices else start until minOf(start + 6, plan.items.size)
@@ -89,7 +89,7 @@ internal fun PlanCard(row: TranscriptRow.Plan) {
 @Composable
 private fun PlanItemText(text: String, status: TodoStatus, moving: Boolean) {
     val struck = status == TodoStatus.DONE || status == TodoStatus.CANCELLED
-    val alpha by animateFloatAsState(if (struck) 1f else 0f, if (moving) tween(220) else snap(), label = "Plan strike")
+    val alpha by animateFloatAsState(if (struck) 1f else 0f, if (moving) tween(220) else snap())
     val muted = secondaryTint
     var layout by remember { mutableStateOf<TextLayoutResult?>(null) }
     Text(text, style = MaterialTheme.typography.bodyLarge,
@@ -112,13 +112,13 @@ internal fun PlanCircle(status: TodoStatus, ink: Color, modifier: Modifier = Mod
     val moving = motionEnabled()
     var shown by remember { mutableStateOf(true) }
     val angle = if (moving && shown && status == TodoStatus.ACTIVE) {
-        rememberInfiniteTransition(label = "Active plan").animateFloat(
-            0f, 360f, infiniteRepeatable(tween(1000, easing = LinearEasing)), label = "Plan arc",
+        rememberInfiniteTransition().animateFloat(
+            0f, 360f, infiniteRepeatable(tween(1000, easing = LinearEasing)),
         )
     } else null
     val done = status == TodoStatus.DONE
-    val check by animateFloatAsState(if (done) 1f else 0f, if (moving) tween(280) else snap(), label = "Plan check")
-    val fill by animateFloatAsState(if (done) 1f else 0.6f, if (moving) spring(dampingRatio = 0.82f, stiffness = 380f) else snap(), label = "Plan fill")
+    val check by animateFloatAsState(if (done) 1f else 0f, if (moving) tween(280) else snap())
+    val fill by animateFloatAsState(if (done) 1f else 0.6f, if (moving) spring(dampingRatio = 0.82f, stiffness = 380f) else snap())
     val foreground = remember(ink) { if (1.05f / (ink.luminance() + 0.05f) >= 3f) Color.White else Color.Black }
     Canvas(modifier.onGloballyPositioned { shown = !it.boundsInWindow().isEmpty }) {
         val stroke = 1.5.dp.toPx()

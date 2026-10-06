@@ -48,6 +48,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.Send
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.automirrored.filled.KeyboardArrowLeft
 import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
@@ -63,6 +64,7 @@ import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Slider
@@ -108,9 +110,9 @@ import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.liveRegion
 import androidx.compose.ui.semantics.semantics
-import androidx.compose.ui.semantics.stateDescription
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.font.FontFamily
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -139,6 +141,9 @@ import com.openmausbot.companion.core.outboundApp
 import com.openmausbot.companion.core.outcome
 import com.openmausbot.companion.core.presentation
 import com.openmausbot.companion.core.showsHeldNote
+import com.openmausbot.companion.core.stacksOptions
+import com.openmausbot.companion.core.takesTypedAnswer
+import com.openmausbot.companion.core.TypedAnswerResult
 import com.openmausbot.companion.core.summaryLine
 import com.openmausbot.companion.core.StreamingText
 import kotlinx.coroutines.flow.collectLatest
@@ -279,7 +284,7 @@ fun MessageRow(
 
             // A request the person spoke on a Live call; the harness labels it.
             if (mine && message.via == "call") {
-                Text(text = "via call", fontSize = 12.sp, color = secondaryTint)
+                Text(text = stringResource(R.string.mobile_message_via_call), fontSize = 12.sp, color = secondaryTint)
             }
 
             message.reactions?.takeIf { it.isNotEmpty() }?.let { reactions ->
@@ -886,6 +891,11 @@ private fun SharedImageAttachment(
 /** The fitted frame an inline image is drawn in; tests measure it. */
 internal const val SHARED_IMAGE_FRAME_TAG = "shared-image-frame"
 
+/** A card's answers when they stack one under another; tests find it. */
+internal const val STACKED_OPTIONS_TAG = "card-options-stacked"
+internal const val CARD_ANSWER_FIELD_TAG = "card-answer-field"
+internal const val CARD_ANSWER_SEND_TAG = "card-answer-send"
+
 @Composable
 private fun AttachmentLoadFailure(label: String, foreground: Color = BubbleColor.mineText, onRetry: () -> Unit) {
     Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(2.dp)) {
@@ -991,7 +1001,7 @@ private fun VoiceNoteAttachmentView(
 
     if (clip is VoiceNoteClipState.Failed) {
         AttachmentLoadFailure(
-            label = "Voice note unavailable",
+            label = stringResource(R.string.mobile_voice_note_unavailable),
             foreground = foreground,
             onRetry = { clip = VoiceNoteClipState.NotLoaded },
         )
@@ -1034,9 +1044,9 @@ private fun VoiceNoteAttachmentView(
                             else -> loadAndPlay()
                         }
                     }
-                    .semantics {
-                        contentDescription = if (playing) "Pause voice note" else "Play voice note"
-                    },
+                    .localizedSemantics(contentDescription = {
+                        stringResource(if (playing) R.string.mobile_voice_note_pause else R.string.mobile_voice_note_play)
+                    }),
                 contentAlignment = Alignment.Center,
             ) {
                 when {
@@ -1071,7 +1081,7 @@ private fun VoiceNoteAttachmentView(
                 colors = SliderDefaults.colors(thumbColor = chatTint.ink, activeTrackColor = chatTint.ink, inactiveTrackColor = chatTint.inset),
                 modifier = Modifier
                     .weight(1f)
-                    .semantics { contentDescription = "Seek voice note" },
+                    .localizedSemantics(contentDescription = { stringResource(R.string.mobile_voice_note_seek) }),
             )
             Text(
                 voiceNoteClock(positionMs) + " / " + (durationMs?.let(::voiceNoteClock) ?: "--:--"),
@@ -1164,7 +1174,7 @@ private fun ActivityChip(
                 maxLines = if (expanded) Int.MAX_VALUE else TOOL_OUTPUT_LINES, overflow = TextOverflow.Ellipsis,
                 modifier = Modifier.padding(start = 32.dp).heightIn(min = 48.dp).clickable(role = Role.Button) {
                     haptics.play(TactileAction.TOGGLE_ACTIVITY_RUN); expanded = !expanded
-                }.semantics { stateDescription = if (expanded) "Expanded" else "Collapsed" })
+                }.localizedSemantics(stateDescription = { stringResource(if (expanded) R.string.mobile_a11y_expanded else R.string.mobile_a11y_collapsed) }))
         }
     }
 }
@@ -1214,13 +1224,13 @@ fun ActivityRunChip(items: List<Message>, openThread: ((ThreadRef) -> Unit)? = n
     var expanded by remember(items.first().id) { mutableStateOf(false) }
     val running = busy && items.any { it.tool?.ok == null }
     val summary = stringResource(if (running) R.string.mobile_running_steps else R.string.mobile_ran_steps, items.size)
-    val angle by animateFloatAsState(if (expanded) 180f else 0f, label = "Step disclosure")
+    val angle by animateFloatAsState(if (expanded) 180f else 0f)
     val connector = MaterialTheme.colorScheme.outlineVariant
     val rtl = LocalLayoutDirection.current == LayoutDirection.Rtl
     Column(Modifier.testTag("step-run-run.${items.first().id}").animateContentSize(spring(dampingRatio = 0.82f, stiffness = 380f))) {
         Row(Modifier.fillMaxWidth().heightIn(min = 48.dp).clickable(role = Role.Button) {
             expanded = !expanded; haptics.play(TactileAction.TOGGLE_ACTIVITY_RUN)
-        }.semantics { stateDescription = if (expanded) "Expanded" else "Collapsed" },
+        }.localizedSemantics(stateDescription = { stringResource(if (expanded) R.string.mobile_a11y_expanded else R.string.mobile_a11y_collapsed) }),
             verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             Box(Modifier.width((22 + (minOf(3, items.size) - 1) * 16).dp).height(22.dp)) {
                 items.take(3).forEachIndexed { index, item ->
@@ -1271,6 +1281,8 @@ private fun CardView(chat: Chat, message: Message, haptics: Haptics) {
         if (wasPending && (card.answered != null || card.dismissed == true)) haptics.play(HapticCue.SUCCESS)
         wasPending = card.isPending
     }
+    // A question's answer in the person's own words.
+    var typedAnswer by remember(message.id) { mutableStateOf("") }
     val skillRequest = card.skillRequest
     val presentation = card.presentation
 
@@ -1390,37 +1402,104 @@ private fun CardView(chat: Chat, message: Message, haptics: Haptics) {
         }
 
         if (card.isPending) {
-            Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                // The buttons are the card's own options, never a string
-                // invented here. Session maps the choice to allow/deny/answer.
-                card.options.forEach { option ->
-                    val refusal = ApprovalChoices.emphasis(option) == OptionEmphasis.SECONDARY
-                    Button(
-                        onClick = {
-                            haptics.play(TactileAction.CHOOSE_APPROVAL)
-                            answering = true
-                            scope.launch {
-                                ApprovalAnswers.choose(session, chat, card, option)
+            // The buttons are the card's own options, never a string invented
+            // here. Session maps the choice to allow/deny/answer.
+            val optionButton: @Composable (String, Modifier) -> Unit = { option, buttonModifier ->
+                val refusal = ApprovalChoices.emphasis(option) == OptionEmphasis.SECONDARY
+                Button(
+                    onClick = {
+                        haptics.play(TactileAction.CHOOSE_APPROVAL)
+                        answering = true
+                        scope.launch {
+                            ApprovalAnswers.choose(session, chat, card, option)
+                            answering = false
+                        }
+                    },
+                    modifier = buttonModifier,
+                    enabled = !answering && (
+                        skillRequest == null ||
+                            refusal ||
+                            skillRequest.reviewedSha256 != null
+                        ),
+                    // Same `isRefusal` that picks the allow choice picks the
+                    // weight, so the most sensible action on the most
+                    // sensitive screen is not the same shape as the refusal.
+                    colors = if (refusal) {
+                        ButtonDefaults.filledTonalButtonColors(containerColor = chatTint.inset, contentColor = chatTint.ink)
+                    } else {
+                        ButtonDefaults.buttonColors(containerColor = chatTint.ink, contentColor = chatTint.actionText)
+                    },
+                ) {
+                    Text(option, textAlign = TextAlign.Center)
+                }
+            }
+            if (card.stacksOptions) {
+                // A question's answers are sentences: one under another, full
+                // width, wrapping, instead of a row that cuts them off.
+                Column(
+                    modifier = Modifier.fillMaxWidth().testTag(STACKED_OPTIONS_TAG),
+                    verticalArrangement = Arrangement.spacedBy(8.dp),
+                ) {
+                    card.options.forEach { option -> optionButton(option, Modifier.fillMaxWidth()) }
+                }
+            } else {
+                Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                    card.options.forEach { option -> optionButton(option, Modifier) }
+                }
+            }
+
+            // A question also takes words: under its options, or on its own
+            // when it offered none (the computer's `ask_user` with no choices,
+            // which left nothing to tap). Once the computer takes the answer
+            // the card stays still until it settles and shows the words; a
+            // failed send keeps them for a retry.
+            if (card.takesTypedAnswer) {
+                val ready = typedAnswer.isNotBlank() && !answering
+                fun sendTypedAnswer() {
+                    if (!ready) return
+                    haptics.play(TactileAction.CHOOSE_APPROVAL)
+                    answering = true
+                    scope.launch {
+                        when (val result = session.answerInWords(chat, card, typedAnswer.trim())) {
+                            TypedAnswerResult.Answered -> Unit
+                            TypedAnswerResult.Gone -> answering = false
+                            is TypedAnswerResult.Failed -> {
+                                session.actionError = result.message
                                 answering = false
                             }
-                        },
-                        enabled = !answering && (
-                            skillRequest == null ||
-                                refusal ||
-                                skillRequest.reviewedSha256 != null
-                            ),
-                        // Same `isRefusal` that picks the allow choice picks the
-                        // weight, so the most sensible action on the most
-                        // sensitive screen is not the same shape as the refusal.
-                        colors = if (refusal) {
-                            ButtonDefaults.filledTonalButtonColors(containerColor = chatTint.inset, contentColor = chatTint.ink)
-                        } else {
-                            ButtonDefaults.buttonColors(containerColor = chatTint.ink, contentColor = chatTint.actionText)
-                        },
-                    ) {
-                        Text(option)
+                        }
                     }
                 }
+                OutlinedTextField(
+                    value = typedAnswer,
+                    onValueChange = { typedAnswer = it },
+                    placeholder = {
+                        Text(
+                            stringResource(
+                                if (card.options.isEmpty()) R.string.mobile_type_your_answer
+                                else R.string.mobile_type_your_own_answer_84cf9943,
+                            ),
+                        )
+                    },
+                    singleLine = false,
+                    maxLines = 4,
+                    enabled = !answering,
+                    shape = RoundedCornerShape(20.dp),
+                    trailingIcon = {
+                        IconButton(
+                            onClick = ::sendTypedAnswer,
+                            enabled = ready,
+                            modifier = Modifier.testTag(CARD_ANSWER_SEND_TAG),
+                        ) {
+                            Icon(
+                                imageVector = Icons.AutoMirrored.Filled.Send,
+                                contentDescription = stringResource(R.string.mobile_submit_answer_bf80bc31),
+                                tint = if (ready) chatTint.ink else secondaryTint,
+                            )
+                        }
+                    },
+                    modifier = Modifier.fillMaxWidth().testTag(CARD_ANSWER_FIELD_TAG),
+                )
             }
 
             // The grant key comes from the card. The phone never derives its

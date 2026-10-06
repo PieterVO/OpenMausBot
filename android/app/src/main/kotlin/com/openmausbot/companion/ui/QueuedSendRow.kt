@@ -116,7 +116,7 @@ fun QueuedSendRow(
         }
         Icon(
             imageVector = Icons.Filled.Edit,
-            contentDescription = "Edit this queued message",
+            contentDescription = stringResource(R.string.mobile_queued_edit),
             tint = MaterialTheme.colorScheme.onSurfaceVariant,
             modifier = Modifier
                 .clip(RoundedCornerShape(50))
@@ -150,9 +150,12 @@ object ComposerPromise {
         engineCanSteer: Boolean,
         sending: Boolean,
         listening: Boolean,
+        /** The bot waiting on the one open question a typed line answers. */
+        questionAsker: String? = null,
     ): String = when {
         sending -> "Sending…"
         listening -> "Listening…"
+        questionAsker != null -> "Answer $questionAsker…"
         !busy -> "Ask $name"
         engineCanSteer -> "Sends into this turn"
         else -> "Sends after this turn"

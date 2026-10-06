@@ -454,9 +454,9 @@ beforeAll(async () => {
         // tests exercise the trusted desktop boundary, while an intentionally
         // missing CLI keeps it out of the default available-model selection.
         codex: { driver: "codex", displayName: "Fixture Codex", config: { cli: join(home, "missing-codex") } },
-        // the engine that runs a turn on the bot's cloud computer (the app
-        // registers it by default); it talks only to the Boat stub
-        computer: { driver: "boxAgent", displayName: "Computer" },
+        // A live engine without computer tools (no key, so never available):
+        // places that need a computer refuse it before anything is mounted.
+        plainApi: { driver: "openai-compat", displayName: "Fixture plain model", config: { tools: false } },
       },
     }),
   );
@@ -926,6 +926,23 @@ beforeAll(async () => {
               { name: "gmail_send_email", description: "bad case" },
               { name: "PLATFORM", description: "no service" },
             ],
+          },
+        }));
+      }
+      // Google's answer when the connection lacks a permission the action
+      // needs, as Composio relays it (MOCA-273).
+      const calledTool = body && typeof body === "object" ? ((body as { params?: { name?: unknown } }).params?.name) : undefined;
+      if (calledTool === "GMAIL_CREATE_FILTER") {
+        res.writeHead(200, { "content-type": "application/json" });
+        return res.end(JSON.stringify({
+          jsonrpc: "2.0",
+          id: requestId,
+          result: {
+            content: [{ type: "text", text: JSON.stringify({
+              successful: false,
+              error: "403 Forbidden: {\"error\":{\"code\":403,\"message\":\"Request had insufficient authentication scopes.\",\"status\":\"PERMISSION_DENIED\",\"details\":[{\"reason\":\"ACCESS_TOKEN_SCOPE_INSUFFICIENT\",\"domain\":\"googleapis.com\"}]}}",
+            }) }],
+            isError: true,
           },
         }));
       }
@@ -2981,7 +2998,12 @@ describe("harness HTTP API", () => {
     const stream = await openSse(`${BASE}/api/events`);
     try {
       writeFileSync(failureMarker, "fail");
-      expect((await api("POST", "/api/browser-engine/install")).status).toBe(202);
+      for (const headers of [{ "content-type": "application/x-www-form-urlencoded" }, { "content-type": "text/plain" }, { "content-type": "application/jsonp" }, undefined]) {
+        const refused = await fetch(`${BASE}/api/browser-engine/install`, { method: "POST", headers, body: headers ? "x=1" : undefined });
+        expect(refused.status).toBe(415);
+      }
+      expect(stream.frames.some((frame) => frame.kind === "config" && frame.browserEngine?.installing === true)).toBe(false);
+      expect((await api("POST", "/api/browser-engine/install", {})).status).toBe(202);
       const start = await stream.until((frame) => frame.kind === "config" && frame.browserEngine?.installing === true);
       expect(start.browserEngine).toMatchObject({ kind: "engine", installing: true });
       expect(start.browserEngine).not.toHaveProperty("installError");
@@ -2990,7 +3012,7 @@ describe("harness HTTP API", () => {
       expect(failed.browserEngine.installing).not.toBe(true);
       rmSync(failureMarker);
       stream.frames.splice(0);
-      expect((await api("POST", "/api/browser-engine/install")).status).toBe(202);
+      expect((await api("POST", "/api/browser-engine/install", {})).status).toBe(202);
       const retry = await stream.until((frame) => frame.kind === "config" && frame.browserEngine?.installing === true);
       expect(retry.browserEngine).not.toHaveProperty("installError");
       await stream.until((frame) => frame.kind === "config" && frame.browserEngine?.kind === "engine" && !frame.browserEngine.installing && !frame.browserEngine.installError);
@@ -3090,72 +3112,26 @@ describe("harness HTTP API", () => {
     }
   });
 
-  it("refuses a Works-on This Computer turn for the box-native engine", async () => {
-    let botId: string | undefined;
-    try {
-      // The Computer engine executes on its cloud machine, so an explicit
-      // host-desktop destination is refused before anything is mounted.
-      const bot = (await api("POST", "/api/bots", {
-        name: "Local refusal",
-        modelSelection: { instanceId: "computer", model: "claude-fable-5" },
-      })).body.bot;
-      botId = bot.id;
-      expect((await api("PATCH", `/api/bots/${bot.id}`, { computer: "local" })).status).toBe(200);
-      expect((await api("POST", `/api/bots/${bot.id}/messages`, { text: "work on this desktop" })).status).toBe(202);
-      await expect.poll(async () => JSON.stringify((await api("GET", "/api/bots?messages=20")).body.bots.find(
-        (candidate: { id: string }) => candidate.id === bot.id,
-      )), { timeout: 5_000 }).toMatch(/the Computer engine works on the cloud computer/);
-    } finally {
-      if (botId) await api("POST", `/api/bots/${botId}/interrupt`, {}).catch(() => undefined);
-      if (botId) await api("DELETE", `/api/bots/${botId}`).catch(() => undefined);
-    }
-  });
-
-  it("refuses a room Works-on This Computer turn for the box-native engine", async () => {
-    let roomId: string | undefined;
-    let botId: string | undefined;
-    try {
-      const member = (await api("POST", "/api/bots", {
-        name: "Room local refusal",
-        modelSelection: { instanceId: "computer", model: "claude-fable-5" },
-      })).body.bot;
-      botId = member.id;
-      expect((await api("PATCH", `/api/bots/${member.id}`, { computer: "local" })).status).toBe(200);
-      const room = (await api("POST", "/api/groups", {
-        name: "Boat-native host refusal",
-        memberIds: [member.id],
-        setup: { bulletin: "", defaultResponder: { kind: "member", botId: member.id } },
-      })).body.group;
-      roomId = room.id;
-      expect((await api("POST", `/api/groups/${room.id}/messages`, { text: "work on this desktop" })).status).toBe(202);
-      await expect.poll(async () => JSON.stringify((await api("GET", `/api/threads/${room.threadId}/messages`)).body),
-        { timeout: 5_000 }).toMatch(/the Computer engine works on the cloud computer/);
-    } finally {
-      if (roomId) await api("POST", `/api/groups/${roomId}/interrupt`, {}).catch(() => undefined);
-      if (roomId) await api("DELETE", `/api/groups/${roomId}`).catch(() => undefined);
-      if (botId) await api("DELETE", `/api/bots/${botId}`).catch(() => undefined);
-    }
-  });
-
-  it("refuses a room Works-on Local VM turn for the box-native engine", async () => {
+  it("refuses a room Works-on Local VM turn for an engine without computer tools", async () => {
     let roomId: string | undefined;
     let botId: string | undefined;
     try {
       const member = (await api("POST", "/api/bots", {
         name: "Room VM refusal",
-        modelSelection: { instanceId: "computer", model: "claude-fable-5" },
+        modelSelection: { instanceId: "plainApi", model: "fixture-plain-model" },
       })).body.bot;
       botId = member.id;
       expect((await api("PATCH", `/api/bots/${member.id}`, { computer: "vm" })).status).toBe(200);
       const room = (await api("POST", "/api/groups", {
-        name: "Boat-native VM refusal",
+        name: "Plain model VM refusal",
         memberIds: [member.id],
         setup: { bulletin: "", defaultResponder: { kind: "member", botId: member.id } },
       })).body.group;
       roomId = room.id;
       expect((await api("POST", `/api/groups/${room.id}/messages`, { text: "work in the virtual machine" })).status).toBe(202);
       await expect.poll(async () => JSON.stringify((await api("GET", `/api/threads/${room.threadId}/messages`)).body),
-        { timeout: 5_000 }).toMatch(/this model cannot use the Local VM.*Set Works on to Auto in this bot's settings to continue/);
+        { timeout: 5_000 }).toMatch(/fixture-plain-model can't use a Local VM\. Choose a model that can, such as Claude or ChatGPT\. Choose another model in Room VM refusal's settings\./);
+      expect(JSON.stringify((await api("GET", `/api/threads/${room.threadId}/messages`)).body)).not.toContain("Works on to Auto");
     } finally {
       if (roomId) await api("POST", `/api/groups/${roomId}/interrupt`, {}).catch(() => undefined);
       if (roomId) await api("DELETE", `/api/groups/${roomId}`).catch(() => undefined);
@@ -3570,7 +3546,6 @@ describe("harness HTTP API", () => {
     writeFileSync(join(isolatedData, "config.json"), JSON.stringify({
       instances: {
         claude: { driver: "claudeAgent", displayName: "Fixture Claude", config: { cli: FAKE_CLAUDE_CLI } },
-        computer: { driver: "boxAgent", displayName: "Computer" },
       },
     }));
     let isolatedStderr = "";
@@ -3813,7 +3788,6 @@ describe("harness HTTP API", () => {
           },
           config: { cli: FAKE_CLAUDE_CLI },
         },
-        computer: { driver: "boxAgent", displayName: "Computer" },
       },
     }));
     let isolatedStderr = "";
@@ -7196,11 +7170,11 @@ describe("harness HTTP API", () => {
 
   it("pins provider approval support at the bot settings gate", async () => {
     const bot = (await api("POST", "/api/bots", {
-      modelSelection: { instanceId: "computer", model: "claude-fable-5" },
+      modelSelection: { instanceId: "ghost", model: "fixture-ghost-model" },
     })).body.bot;
     try {
-      // The Boat-native agent has no Full mapping, so the bot-level PATCH
-      // must refuse Full before the trusted-desktop transition.
+      // An engine without a Full mapping: the bot-level PATCH must refuse
+      // Full before the trusted-desktop transition.
       const refused = await api("PATCH", `/api/bots/${bot.id}`, { approvalMode: "full" });
       expect(refused.status).toBe(400);
       expect(refused.body.error).toMatch(/does not support the selected approval level, or changing providers requires choosing Ask first/);
@@ -9905,7 +9879,8 @@ describe("harness HTTP API", () => {
       });
       expect(unavailableCloud.status).toBe(409);
       expect(await unavailableCloud.json()).toMatchObject({
-        error: expect.stringMatching(/Boat API key|Cloud VM runner/i),
+        // The same words a failed cloud turn's row uses (shared/place-view.ts).
+        error: expect.stringMatching(/^A cloud computer here needs your own Boat key, a paid service\. Add a Boat key in Settings → API keys\./),
       });
 
       const proposed = await fetch(`${BASE}/api/internal/routine-requests`, {
@@ -11071,6 +11046,35 @@ describe("harness HTTP API", () => {
       await new Promise((resolve) => setTimeout(resolve, 200));
     }
   };
+
+  it("explains a missing Google permission instead of passing the bare 403 to the bot", async () => {
+    // MOCA-273: GMAIL_CREATE_FILTER needs gmail.settings.basic, which the
+    // default Composio Gmail connection never asks for. Reconnecting cannot
+    // fix it, so the bot must learn what can, and stop retrying.
+    expect((await api("PUT", "/api/config", { composio: { apiKey: "" } })).status).toBe(200);
+    const bot = (await api("POST", "/api/bots")).body.bot;
+    try {
+      expect((await api("PATCH", `/api/bots/${bot.id}`, { composio: true })).status).toBe(200);
+      const token = await mintTestCapability(BASE, bot.id, bot.threadId, { kind: "connectors" });
+      const response = await fetch(`${BASE}/api/internal/connectors/mcp`, {
+        method: "POST",
+        headers: { "content-type": "application/json", authorization: `Bearer ${token}` },
+        body: JSON.stringify({ jsonrpc: "2.0", id: 21, method: "tools/call", params: { name: "GMAIL_CREATE_FILTER", arguments: {} } }),
+      });
+      expect(response.status).toBe(200);
+      const body = await response.json() as { result: { content: Array<{ text: string }>; isError?: boolean } };
+      const texts = body.result.content.map((item) => item.text);
+      // Google's own error is still there, untouched.
+      expect(texts[0]).toContain("ACCESS_TOKEN_SCOPE_INSUFFICIENT");
+      expect(body.result.isError).toBe(true);
+      const hint = texts.slice(1).join("\n");
+      expect(hint).toContain("https://www.googleapis.com/auth/gmail.settings.basic");
+      expect(hint).toContain("Reconnecting");
+      expect(hint).toContain("Do not retry");
+    } finally {
+      await api("DELETE", `/api/bots/${bot.id}`);
+    }
+  });
 
   it("enforces per-bot connector tool grants on relayed tool calls", async () => {
     // Clear any project key an earlier test left behind, so the relay uses

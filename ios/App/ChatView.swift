@@ -173,6 +173,54 @@ struct ChatView: View {
         guard current.busy, detail == .hidden else { return nil }
         return live.latest
     }
+    /// What every row of one render reads, worked out once in `body`.
+    private struct RowInputs {
+        let transcript: [TranscriptRow]
+        let versions: [String?: [Message]]
+        let pendingEdit: PendingEdit?
+        let turnDigests: [String: Message]
+        let lastReplies: [String: String]
+    }
+
+    /// One transcript row's content. Its own function rather than inline in
+    /// `body`, which otherwise took the type checker over half a second.
+    @ViewBuilder
+    private func rowContent(_ row: TranscriptRow, at index: Int, inputs: RowInputs, proxy: ScrollViewProxy) -> some View {
+        let transcript = inputs.transcript
+        switch row {
+        case let .message(message):
+            MessageRow(
+                chat: current,
+                message: message,
+                versions: message.role == .user && message.kind == .text
+                    ? inputs.versions[message.parentId] ?? [] : [],
+                endsRun: endsRun(at: index, in: transcript),
+                startsRun: index == 0 || endsRun(at: index - 1, in: transcript),
+                turnDigest: message.turnId.flatMap { inputs.lastReplies[$0] == message.id ? inputs.turnDigests[$0] : nil },
+                pendingEditPlaceholder: inputs.pendingEdit?.placeholderId,
+                editPending: inputs.pendingEdit != nil,
+                routineRef: message.routineRun.flatMap { session.state.routineExecutionRef(for: $0) },
+                openLink: openLink,
+                openThread: openThread
+            )
+            .equatable()
+            .environment(\.replyArrival, replyArrival(for: message, in: transcript))
+        case let .activityRun(items):
+            ActivityRunChip(items: items, openThread: openThread, runID: row.id, busy: current.busy)
+                .equatable()
+        case let .assistantTurn(turn):
+            AssistantTurnChip(
+                turn: turn, chat: current, openLink: openLink, openThread: openThread,
+                revealedMessageId: revealedMessageId,
+                scrollToMessage: { proxy.scrollTo($0, anchor: .center) },
+                digest: inputs.turnDigests[turn.turnId]
+            )
+        case let .plan(id, message, plan):
+            PlanCard(rowID: id, plan: plan, color: message.from?.color ?? current.color)
+                .padding(.trailing, transcriptWidth * 0.08)
+        }
+    }
+
 
     /// Whether the transcript ends with the typing bubble (`TurnTail`): busy,
     /// not waiting on you, no card open, and the last row on screen is not a
@@ -247,16 +295,27 @@ struct ChatView: View {
     }
 
     var body: some View {
+        lifecycle(screen)
+    }
+
+    /// The chat as drawn: transcript, live tail, call bars and composer. Kept
+    /// apart from `lifecycle` because, as one body, the type checker took
+    /// over half a second on it.
+    @ViewBuilder
+    private var screen: some View {
         // Read the transcript once for this render. Pagination changes the
         // array as a unit; repeatedly reaching through ObservableObject for
         // every row only recomputes the same value.
         let transcript = rows
-        let versions = session.state.userMessageVersions(inThread: threadId)
-        let pendingEdit = session.state.pendingEdits[threadId]
-        let turnDigests = digestsByTurn(messages)
-        let lastReplies = messages.reduce(into: [String: String]()) { result, message in
-            if message.role == .bot, message.kind == .text, let turn = message.turnId { result[turn] = message.id }
-        }
+        let inputs = RowInputs(
+            transcript: transcript,
+            versions: session.state.userMessageVersions(inThread: threadId),
+            pendingEdit: session.state.pendingEdits[threadId],
+            turnDigests: digestsByTurn(messages),
+            lastReplies: messages.reduce(into: [String: String]()) { result, message in
+                if message.role == .bot, message.kind == .text, let turn = message.turnId { result[turn] = message.id }
+            }
+        )
         // A VStack with the composer as a sibling, rather than a scroll view
         // with `.safeAreaInset`. The inset version sized itself to its
         // content, so a short transcript left the composer floating in the
@@ -307,38 +366,7 @@ struct ChatView: View {
                                         .padding(.top, 10)
                                         .padding(.bottom, 4)
                                 }
-                                switch row {
-                                case let .message(message):
-                                    MessageRow(
-                                        chat: current,
-                                        message: message,
-                                        versions: message.role == .user && message.kind == .text
-                                            ? versions[message.parentId] ?? [] : [],
-                                        endsRun: endsRun(at: index, in: transcript),
-                                        startsRun: index == 0 || endsRun(at: index - 1, in: transcript),
-                                        turnDigest: message.turnId.flatMap { lastReplies[$0] == message.id ? turnDigests[$0] : nil },
-                                        pendingEditPlaceholder: pendingEdit?.placeholderId,
-                                        editPending: pendingEdit != nil,
-                                        routineRef: message.routineRun.flatMap { session.state.routineExecutionRef(for: $0) },
-                                        openLink: openLink,
-                                        openThread: openThread
-                                    )
-                                    .equatable()
-                                    .environment(\.replyArrival, replyArrival(for: message, in: transcript))
-                                case let .activityRun(items):
-                                    ActivityRunChip(items: items, openThread: openThread, runID: row.id, busy: current.busy)
-                                        .equatable()
-                                case let .assistantTurn(turn):
-                                    AssistantTurnChip(
-                                        turn: turn, chat: current, openLink: openLink, openThread: openThread,
-                                        revealedMessageId: revealedMessageId,
-                                        scrollToMessage: { proxy.scrollTo($0, anchor: .center) },
-                                        digest: turnDigests[turn.turnId]
-                                    )
-                                case let .plan(id, message, plan):
-                                    PlanCard(rowID: id, plan: plan, color: message.from?.color ?? current.color)
-                                        .padding(.trailing, transcriptWidth * 0.08)
-                                }
+                                rowContent(row, at: index, inputs: inputs, proxy: proxy)
                             }
                             // Never wider than the column, whatever is inside. A frame
                             // with only a maximum takes its content's width when that is
@@ -607,11 +635,19 @@ struct ChatView: View {
         .overlay(alignment: .bottomTrailing) {
 #if DEBUG
             if ProcessInfo.processInfo.arguments.contains("-busy-fleet-preview") {
-                Text("Offline busy-fleet fixture")
-                    .font(.caption2)
-                    .allowsHitTesting(false)
-                    .accessibilityIdentifier("busy-fleet-progress")
-                    .accessibilityValue(session.state.cursor ?? "0")
+                VStack(alignment: .trailing, spacing: 0) {
+                    Text("Offline busy-fleet fixture")
+                        .font(.caption2)
+                        .accessibilityIdentifier("busy-fleet-progress")
+                        .accessibilityValue(session.state.cursor ?? "0")
+                    // Message rows drawn so far: ResponsivenessUITests checks
+                    // that typing and other threads' tokens add none.
+                    Text(verbatim: "rows \(TranscriptRedrawProbe.rows)")
+                        .font(.caption2)
+                        .accessibilityIdentifier("transcript-row-redraws")
+                        .accessibilityValue(String(TranscriptRedrawProbe.rows))
+                }
+                .allowsHitTesting(false)
             }
 #endif
         }
@@ -625,6 +661,12 @@ struct ChatView: View {
         .navigationDestination(isPresented: $showingComputer) {
             if case let .bot(bot) = current { ComputerView(bot: bot) }
         }
+    }
+
+    /// What the chat does as it opens, changes thread, comes and goes from
+    /// the screen, and the sheets it presents.
+    private func lifecycle<Content: View>(_ content: Content) -> some View {
+        content
         .task(id: threadId) {
             if selectedThreadWasRemoved { dismiss(); return }
             let openedChat = current
@@ -895,6 +937,9 @@ struct ChatView: View {
                     }
                     .buttonStyle(.plain)
                     .glassCapsule()
+                    // The thread you are on, now that the pill under the
+                    // face that named it is gone.
+                    .accessibilityValue(Text(verbatim: current.threadTitle))
                     .accessibilityIdentifier("header-threads")
                 }
                 if case .bot = current {
@@ -1233,9 +1278,17 @@ struct ChatView: View {
         return attachments.isEmpty && session.steeringInstanceIds.contains(bot.modelSelection.instanceId)
     }
 
+    /// The one open question a typed line answers. A bot blocked on its
+    /// question never reads a line steered into its turn, so while exactly
+    /// one question waits (and nothing is attached) Send answers it instead.
+    private var composerQuestion: ComposerQuestion.Target? {
+        ComposerQuestion.target(in: messages, chatName: current.name, hasAttachments: !attachments.isEmpty)
+    }
+
     private var composerPrompt: String {
         if sendingMessage { return "Sending…" }
         if dictation.isListening { return "Listening…" }
+        if let asker = composerQuestion?.asker { return String(localized: "Answer \(asker)…") }
         if current.busy { return engineCanSteer ? "Sends into this turn" : "Sends after this turn" }
         return "Ask \(current.name)"
     }
@@ -1258,6 +1311,8 @@ struct ChatView: View {
         let text = (explicitText ?? draftAtSend).trimmingCharacters(in: .whitespacesAndNewlines)
         let outgoingAttachments = attachments
         let chatAtSend = current
+        // Only the typed line answers; a chip or a command is its own ask.
+        let question = explicitText == nil ? composerQuestion : nil
         guard !text.isEmpty || !outgoingAttachments.isEmpty,
               !preparingAttachments,
               !sendingMessage
@@ -1267,11 +1322,27 @@ struct ChatView: View {
         showCommandHUD = false
         showingPlus = false
         Task {
-            let sent = await session.send(
-                text: text,
-                attachments: outgoingAttachments,
-                to: chatAtSend
-            )
+            let sent: Bool
+            if let question, !text.isEmpty {
+                switch await session.answer(chat: chatAtSend, card: question.card, inWords: question.answer(text)) {
+                case .answered:
+                    sent = true
+                case .gone:
+                    // The question closed before the line reached it: say
+                    // it as an ordinary message rather than lose it.
+                    sent = await session.send(text: text, attachments: [], to: chatAtSend)
+                case let .failed(failure):
+                    // Keep the words in the field, with the reason under it.
+                    session.actionError = failure
+                    sent = false
+                }
+            } else {
+                sent = await session.send(
+                    text: text,
+                    attachments: outgoingAttachments,
+                    to: chatAtSend
+                )
+            }
             sendingMessage = false
             guard sent else {
                 let failure = session.actionError ?? "Couldn't send this message. Try again."
@@ -1821,7 +1892,9 @@ struct ChatView: View {
                         .buttonStyle(.plain)
                         .disabled(!canSend)
                         .animation(.easeOut(duration: 0.15), value: canSend)
-                        .accessibilityLabel(current.busy
+                        .accessibilityLabel(composerQuestion != nil
+                            ? "Submit answer"
+                            : current.busy
                             ? engineCanSteer ? "Send into the running turn" : "Queue this message for when the turn finishes"
                             : "Send message")
                     }
@@ -1846,6 +1919,17 @@ struct ChatView: View {
         .frame(maxWidth: .infinity)
     }
 }
+
+#if DEBUG
+/// How many times a message row has been drawn, for ResponsivenessUITests:
+/// typing into a chat, or another thread's tokens, must not redraw it.
+/// Shown only by the `-busy-fleet-preview` fixture's badge.
+@MainActor
+enum TranscriptRedrawProbe {
+    private(set) static var rows = 0
+    static func noteRow() { rows &+= 1 }
+}
+#endif
 
 struct MessageRow: View, Equatable {
     let chat: Chat
@@ -1921,6 +2005,9 @@ struct MessageRow: View, Equatable {
     }
 
     var body: some View {
+#if DEBUG
+        let _ = TranscriptRedrawProbe.noteRow()
+#endif
         VStack(alignment: message.role == .user ? .trailing : .leading, spacing: 6) {
             content
 
@@ -2800,6 +2887,9 @@ struct CardView: View {
     /// The full request behind a short card. Collapsed until asked for, and
     /// again whenever the card is drawn afresh.
     @State private var showingDetails = false
+    /// A question's answer in the person's own words.
+    @State private var typedAnswer = ""
+    @FocusState private var answerFocused: Bool
 
     /// The option this card offers that means "go ahead".
     ///
@@ -2903,35 +2993,29 @@ struct CardView: View {
                 }
 
                 if card.isPending {
-                    HStack(spacing: 8) {
-                        ForEach(card.options, id: \.self) { option in
-                            Button {
-                                Haptics.selection()
-                                answering = true
-                                Task {
-                                    await session.answer(chat: chat, card: card, choice: option)
-                                    answering = false
-                                    if session.actionError == nil { Haptics.success() }
+                    // A question's answers are sentences: one under another,
+                    // full width, wrapping. Allow and Deny share a row.
+                    Group {
+                        if card.stacksOptions {
+                            VStack(spacing: 8) {
+                                ForEach(card.options, id: \.self) { option in
+                                    optionButton(option, card: card, stacked: true)
                                 }
-                            } label: {
-                                Text(option)
-                                    .font(.subheadline.weight(.semibold))
-                                    .foregroundStyle(Self.isRefusal(option) ? Color.primary : BotTint.actionLabel(message.from?.color ?? chat.color))
-                                    .frame(maxWidth: .infinity)
-                                    .frame(minHeight: 44)
-                                    .background(
-                                        Capsule().fill(Self.isRefusal(option) ? BotTint.inset : tint)
-                                    )
                             }
-                            .buttonStyle(.plain)
-                            .disabled(
-                                answering ||
-                                    (card.skillRequest != nil && !Self.isRefusal(option) &&
-                                        card.skillRequest?.reviewedSha256 == nil)
-                            )
+                            .accessibilityIdentifier("card-options-stacked")
+                        } else {
+                            HStack(spacing: 8) {
+                                ForEach(card.options, id: \.self) { option in
+                                    optionButton(option, card: card, stacked: false)
+                                }
+                            }
                         }
                     }
                     .padding(.top, 2)
+
+                    if card.takesTypedAnswer {
+                        typedAnswerField(card)
+                    }
 
                     // The grant key comes from the card. The phone never
                     // derives its own, so it cannot permit something subtly
@@ -2978,6 +3062,98 @@ struct CardView: View {
             .padding(14)
             .frame(maxWidth: .infinity, alignment: .leading)
             .background(BotTint.theirs(message.from?.color ?? chat.color), in: RoundedRectangle(cornerRadius: 20, style: .continuous))
+        }
+    }
+
+    /// One answer. Stacked, it takes the card's width and as many lines as
+    /// its label needs; in a row, it takes an equal share at one height.
+    private func optionButton(_ option: String, card: OptionCard, stacked: Bool) -> some View {
+        let refusal = Self.isRefusal(option)
+        let fill = refusal ? BotTint.inset : tint
+        // A capsule around two or three lines reads as a blob; a stacked
+        // answer gets rounded corners instead.
+        let shape = stacked ? AnyShape(RoundedRectangle(cornerRadius: 16, style: .continuous)) : AnyShape(Capsule())
+        return Button {
+            Haptics.selection()
+            answering = true
+            Task {
+                await session.answer(chat: chat, card: card, choice: option)
+                answering = false
+                if session.actionError == nil { Haptics.success() }
+            }
+        } label: {
+            Text(option)
+                .font(.subheadline.weight(.semibold))
+                .foregroundStyle(refusal ? Color.primary : BotTint.actionLabel(message.from?.color ?? chat.color))
+                .multilineTextAlignment(stacked ? .center : .leading)
+                .fixedSize(horizontal: false, vertical: stacked)
+                .padding(.horizontal, stacked ? 16 : 0)
+                .padding(.vertical, stacked ? 10 : 0)
+                .frame(maxWidth: .infinity)
+                .frame(minHeight: 44)
+                .background(shape.fill(fill))
+                .contentShape(shape)
+        }
+        .buttonStyle(.plain)
+        .disabled(
+            answering ||
+                (card.skillRequest != nil && !refusal && card.skillRequest?.reviewedSha256 == nil)
+        )
+    }
+
+    /// A question also takes words: under its options, or on its own when it
+    /// offered none (the computer's `ask_user` with no choices, which left
+    /// nothing to tap). Sent the way the buttons are, as the answer's text.
+    private func typedAnswerField(_ card: OptionCard) -> some View {
+        let prompt: LocalizedStringKey = card.options.isEmpty ? "Type your answer" : "Type your own answer"
+        let ready = !typedAnswer.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && !answering
+        return HStack(alignment: .bottom, spacing: 8) {
+            TextField(prompt, text: $typedAnswer, axis: .vertical)
+                .font(.body)
+                .lineLimit(1...4)
+                .textFieldStyle(.plain)
+                .focused($answerFocused)
+                .padding(.vertical, 11)
+                .frame(minHeight: 44)
+                .disabled(answering)
+                .accessibilityIdentifier("card-answer-field")
+            Button {
+                sendTypedAnswer(card)
+            } label: {
+                Image(systemName: "arrow.up")
+                    .font(.system(size: 15, weight: .bold))
+                    .foregroundStyle(ready ? BotTint.actionLabel(message.from?.color ?? chat.color) : Color.secondary)
+                    .frame(width: 32, height: 32)
+                    .background(Circle().fill(ready ? tint : Color.secondary.opacity(0.18)))
+                    .frame(width: 44, height: 44)
+                    .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .disabled(!ready)
+            .accessibilityLabel("Submit answer")
+            .accessibilityIdentifier("card-answer-send")
+        }
+        .padding(.leading, 14)
+        .background(BotTint.inset, in: RoundedRectangle(cornerRadius: 22, style: .continuous))
+    }
+
+    /// Once the computer takes the answer the card stays still until it
+    /// settles and shows the words; a failed send keeps them for a retry.
+    private func sendTypedAnswer(_ card: OptionCard) {
+        let typed = typedAnswer.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !typed.isEmpty, !answering else { return }
+        Haptics.selection()
+        answering = true
+        answerFocused = false
+        Task {
+            switch await session.answer(chat: chat, card: card, inWords: typed) {
+            case .answered:
+                break
+            case .gone:
+                answering = false
+            case .failed:
+                answering = false
+            }
         }
     }
 
@@ -3057,7 +3233,14 @@ struct ScreenShot: View {
     let threadId: String
     let message: Message
     @Environment(\.sessionActions) private var session
+    @Environment(\.displayScale) private var displayScale
+    /// The width the frame is drawn at, once laid out.
+    @State private var width: CGFloat = 0
     @State private var image: UIImage?
+    /// The pixel width `image` was decoded for.
+    @State private var decodedWidth = 0
+
+    private var pixelWidth: Int { Int((width * displayScale).rounded(.up)) }
 
     var body: some View {
         Group {
@@ -3073,18 +3256,64 @@ struct ScreenShot: View {
                     .overlay { ProgressView() }
             }
         }
-        .task {
-            guard image == nil else { return }
-            let data: Data?
-            if let inline = message.png, let decoded = Data(base64Encoded: inline) {
-                data = decoded
-            } else if message.hasImage == true {
-                data = await session?.image(threadId: threadId, messageId: message.id)
-            } else {
-                data = nil
-            }
-            image = data.flatMap(UIImage.init(data:))
+        // Size only, so this fires on a rotation and not on every scroll.
+        .onGeometryChange(for: CGFloat.self) { $0.size.width } action: { width = $0 }
+        .task(id: "\(message.id)|\(pixelWidth)") { await load(pixelWidth: pixelWidth) }
+    }
+
+    private func load(pixelWidth: Int) async {
+        guard pixelWidth > 0, pixelWidth != decodedWidth else { return }
+        if let cached = ScreenShotImages.cached(messageId: message.id, pixelWidth: pixelWidth) {
+            image = cached
+            decodedWidth = pixelWidth
+            return
         }
+        var data: Data?
+        if let inline = message.png {
+            data = await ScreenShotImages.data(fromBase64: inline)
+        }
+        if data == nil, message.hasImage == true {
+            data = await session?.image(threadId: threadId, messageId: message.id)
+        }
+        guard let data, !Task.isCancelled else { return }
+        let decoded = await ScreenShotImages.decode(data, messageId: message.id, pixelWidth: pixelWidth)
+        guard let decoded, !Task.isCancelled else { return }
+        image = decoded
+        decodedWidth = pixelWidth
+    }
+}
+
+/// A computer frame is often a full-resolution screenshot, while the
+/// transcript draws it a phone's width across. The decode runs off the main
+/// actor through `ImageDownsampler`, straight to the drawn width, and the
+/// bitmap is kept by message id and width in a `DecodedImageCache`, which
+/// the system can empty under memory pressure.
+enum ScreenShotImages {
+    private static let cache = DecodedImageCache<DecodedImage>(
+        countLimit: 64, totalCostLimit: 48 * 1024 * 1024, cost: \.byteCount
+    )
+
+    private static func key(_ messageId: String, _ pixelWidth: Int) -> String {
+        "\(messageId)|\(pixelWidth)"
+    }
+
+    static func cached(messageId: String, pixelWidth: Int) -> UIImage? {
+        cache.cached(key(messageId, pixelWidth)).map { UIImage(cgImage: $0.cgImage) }
+    }
+
+    /// Base64 decoding a large inline frame is work too: off the main actor.
+    static func data(fromBase64 inline: String) async -> Data? {
+        await Task.detached(priority: .userInitiated) { Data(base64Encoded: inline) }.value
+    }
+
+    /// `data` decoded `pixelWidth` pixels across (never larger than it is),
+    /// once per message and width.
+    static func decode(_ data: Data, messageId: String, pixelWidth: Int) async -> UIImage? {
+        guard pixelWidth > 0 else { return nil }
+        let decoded = await cache.value(for: key(messageId, pixelWidth)) {
+            ImageDownsampler.decode(data, fittingWidth: pixelWidth)
+        }
+        return decoded.map { UIImage(cgImage: $0.cgImage) }
     }
 }
 

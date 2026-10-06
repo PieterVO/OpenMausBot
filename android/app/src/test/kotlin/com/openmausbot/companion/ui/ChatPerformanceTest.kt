@@ -140,7 +140,7 @@ class ChatPerformanceTest {
         compose.runOnIdle {
             assertTrue(frames.tryEmit(StreamFrame(Frame.Runtime(RuntimeEvent("content.delta", threadId, delta, "assistant_text")), seq = ++sequence)))
         }
-        compose.waitUntil(5000) { scene.session.state.value.streaming[threadId] == expected }
+        compose.waitForStream { scene.session.state.value.streaming[threadId] == expected }
         compose.waitForIdle()
     }
 

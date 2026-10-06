@@ -61,9 +61,9 @@ internal fun ThinkingView(reasoning: String, answering: Boolean = false) {
         while (!answering && shown) { seconds = (android.os.SystemClock.elapsedRealtime() - start) / 1000; delay(1000) }
     }
     val moving = motionEnabled()
-    val pulse = if (moving && shown && !answering) rememberInfiniteTransition(label = "Thinking") else null
-    val alpha = pulse?.animateFloat(0.45f, 1f, infiniteRepeatable(tween(800), RepeatMode.Reverse), label = "Thinking dot")
-    val shimmer = pulse?.animateFloat(-1f, 2f, infiniteRepeatable(tween(1600, easing = LinearEasing)), label = "Thinking shimmer")
+    val pulse = if (moving && shown && !answering) rememberInfiniteTransition() else null
+    val alpha = pulse?.animateFloat(0.45f, 1f, infiniteRepeatable(tween(800), RepeatMode.Reverse))
+    val shimmer = pulse?.animateFloat(-1f, 2f, infiniteRepeatable(tween(1600, easing = LinearEasing)))
     val retained = remember(reasoning) { Reasoning.steps(reasoning).joinToString("\n\n") }
     val scroll = rememberScrollState()
     val bringIntoView = remember { BringIntoViewRequester() }
@@ -79,7 +79,7 @@ internal fun ThinkingView(reasoning: String, answering: Boolean = false) {
     Column(Modifier.fillMaxWidth(0.8f).onGloballyPositioned { shown = !it.boundsInWindow().isEmpty }
         .animateContentSize(spring(dampingRatio = 0.82f, stiffness = 380f)), verticalArrangement = Arrangement.spacedBy(4.dp)) {
         Row(Modifier.fillMaxWidth().heightIn(min = 48.dp).testTag("thinking-row")
-            .clickable(role = Role.Button) { expanded = !expanded }.semantics { stateDescription = if (expanded) "Expanded" else "Collapsed" },
+            .clickable(role = Role.Button) { expanded = !expanded }.localizedSemantics(stateDescription = { stringResource(if (expanded) R.string.mobile_a11y_expanded else R.string.mobile_a11y_collapsed) }),
             verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             if (!answering) androidx.compose.foundation.Canvas(Modifier.size(8.dp)) {
                 drawCircle(tint.ink.copy(alpha = alpha?.value ?: 1f))
@@ -99,7 +99,7 @@ internal fun ThinkingView(reasoning: String, answering: Boolean = false) {
             if (!answering) Text("${seconds}s", style = MaterialTheme.typography.labelSmall.copy(fontFeatureSettings = "tnum"), color = secondaryTint)
             Icon(Icons.Filled.KeyboardArrowDown, null, tint = secondaryTint, modifier = Modifier.size(16.dp))
         }
-        if (!answering && !expanded) AnimatedContent(targetState = retained.takeLast(400), label = "Latest thought") { text ->
+        if (!answering && !expanded) AnimatedContent(targetState = retained.takeLast(400)) { text ->
             val previewHeight = with(androidx.compose.ui.platform.LocalDensity.current) {
                 (MaterialTheme.typography.bodySmall.lineHeight.toPx() * 2).roundToInt()
             }
