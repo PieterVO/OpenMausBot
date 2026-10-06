@@ -43,29 +43,18 @@ struct RosterFace<Face: View>: View {
     }
 }
 
-/// Only this small stroke redraws, not the avatar or its row. The turn is a
-/// repeating Core Animation rotation rather than a per-frame TimelineView: a
-/// home list of working bots stays mounted under an open chat, and would
-/// otherwise rebuild every arc on the main thread 30 times a second. Reduce
-/// Motion replaces the arc with a ring.
+/// Only this small stroke animates, not the avatar or its row, and it turns
+/// in the render server (SpinningArc): a home list of working bots stays
+/// mounted under an open chat, and a SwiftUI rotation would commit a frame
+/// per arc on the main thread for as long as they work. Reduce Motion
+/// replaces the arc with a ring.
 struct RosterWorkingArc: View {
     let color: Color
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
-    @State private var turning = false
 
     var body: some View {
-        ZStack {
-            Circle().stroke(color.opacity(0.14), lineWidth: 1.5)
-            Circle()
-                .trim(from: 0, to: reduceMotion ? 1 : 0.28)
-                .stroke(color, style: StrokeStyle(lineWidth: 1.5, lineCap: .round))
-                .rotationEffect(.degrees(turning ? 270 : -90))
-                .animation(turning ? .linear(duration: 2.4).repeatForever(autoreverses: false) : .default, value: turning)
-        }
-        .onAppear { turning = !reduceMotion }
-        .onDisappear { turning = false }
-        .onValueChange(of: reduceMotion) { turning = !$0 }
-        .accessibilityHidden(true)
+        SpinningArc(color: color, track: color.opacity(0.14), lineWidth: 1.5, length: 0.28, period: 2.4, turning: !reduceMotion)
+            .accessibilityHidden(true)
     }
 }
 

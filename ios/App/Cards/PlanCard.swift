@@ -175,26 +175,16 @@ private struct PlanItemRow: View {
     }
 }
 
-/// The in-progress item's ring: a quarter arc turning once a second, driven
-/// by Core Animation rather than rebuilt every frame on the main thread. A
-/// plan left mid-way in an old turn would otherwise keep a TimelineView
-/// running for as long as the chat is open. Still with Reduce Motion.
+/// The in-progress item's ring: a quarter arc turning once a second in the
+/// render server (SpinningArc), so a plan left mid-way in an old turn costs
+/// the main thread nothing for as long as the chat is open. Still with
+/// Reduce Motion.
 private struct PlanActiveRing: View {
     let tint: Color
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
-    @State private var turning = false
 
     var body: some View {
-        Circle().stroke(tint.opacity(0.35), lineWidth: 1.5)
-            .overlay {
-                Circle().trim(from: 0, to: 0.25)
-                    .stroke(tint, style: StrokeStyle(lineWidth: 2, lineCap: .round))
-                    .rotationEffect(.degrees(turning ? 270 : -90))
-                    .animation(turning ? .linear(duration: 1).repeatForever(autoreverses: false) : .default, value: turning)
-            }
-            .onAppear { turning = !reduceMotion }
-            .onDisappear { turning = false }
-            .onValueChange(of: reduceMotion) { turning = !$0 }
+        SpinningArc(color: tint, track: tint.opacity(0.35), lineWidth: 2, length: 0.25, period: 1, turning: !reduceMotion)
     }
 }
 

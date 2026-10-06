@@ -184,6 +184,12 @@ final class ChatShowcaseUITests: XCTestCase {
         if let target { app.launchArguments += ["-chat-showcase-target", target] }
         if bottom { app.launchArguments.append("-chat-showcase-bottom") }
         app.launch()
+        // The same first-launch guard LiveCallUITests uses: a freshly
+        // installed fixture app occasionally opens on the pairing screen.
+        if app.buttons["Connect computer"].waitForExistence(timeout: 2) {
+            app.terminate()
+            app.launch()
+        }
         if openFirst { XCTAssertTrue(app.textFields["message-input"].waitForExistence(timeout: 10)) }
         return app
     }

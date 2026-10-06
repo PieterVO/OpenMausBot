@@ -51,7 +51,37 @@ final class Session: ObservableObject {
         case offline(String)
     }
 
-    @Published private(set) var state = CompanionState()
+    /// The folded fleet. Published by hand rather than with `@Published`, so a
+    /// delivery that only carries reply tokens can skip it: those change
+    /// `streaming` and `reasoning` and nothing else, arrive up to twenty times
+    /// a second per busy bot, and used to rebuild every observing view (the
+    /// home list under an open chat included) on each one. Token text reaches
+    /// the screen through `liveText` instead, whose per-thread objects only
+    /// the views showing that thread's live reply observe.
+    private(set) var state = CompanionState() {
+        willSet { if !quietStreamUpdate { objectWillChange.send() } }
+        didSet {
+            liveText.sync(streaming: state.streaming, reasoning: state.reasoning)
+            if !quietStreamUpdate {
+                stateVersion &+= 1
+                stateSubject.send(state)
+            }
+        }
+    }
+    /// Bumped with every published change of `state`: views memoize work
+    /// derived from the whole fleet (home summaries, Updates) against it.
+    private(set) var stateVersion = 0
+    /// `$state` as it was: the current value on subscribe, then every
+    /// published change.
+    var statePublisher: AnyPublisher<CompanionState, Never> { stateSubject.eraseToAnyPublisher() }
+    private let stateSubject = CurrentValueSubject<CompanionState, Never>(CompanionState())
+    private var quietStreamUpdate = false
+    /// Reply and reasoning text as it streams, per thread (see `state`).
+    let liveText = LiveTextStore()
+    /// One thread's live text, seeded with what has already streamed.
+    func liveText(for threadId: String) -> LiveText {
+        liveText.thread(threadId, streaming: state.streaming[threadId], reasoning: state.reasoning[threadId])
+    }
     @Published private(set) var connection: Connection?
     @Published private(set) var connections: [Connection] = []
     let threadSelection = BotThreadSelection()
@@ -1240,7 +1270,17 @@ final class Session: ObservableObject {
     private func applyStreamBatch(_ batch: [StreamFrame]) {
         var updated = state
         updated.applyBatch(batch)
+        // Only reply/reasoning tokens (and the cursor they advance): fold them
+        // without publishing `state`. `liveText` carries the text to the one
+        // bubble showing it; nothing else on screen depends on these fields.
+        let tokensOnly = batch.allSatisfy { frame in
+            if case let .runtime(event) = frame.frame { return event.type == "content.delta" }
+            return false
+        }
+        quietStreamUpdate = tokensOnly
         state = updated
+        quietStreamUpdate = false
+        if tokensOnly { return }
         for frame in batch {
             if case let .runtime(event) = frame.frame,
                ["turn.completed", "runtime.error", "request.opened", "request.resolved", "item.completed"].contains(event.type) {

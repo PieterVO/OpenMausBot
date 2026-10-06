@@ -255,15 +255,34 @@ struct MarkdownText: View {
 
     /// Measure the same styled runs that are drawn, including the padding of
     /// code spans. Dynamic Type must grow the table, not clip its cell labels.
+    /// Remembered per table and text size: a table being revealed row by row
+    /// is laid out on every frame, and measuring every cell each time was a
+    /// visible share of the main thread.
     private func columnWidths(_ table: MarkdownTable) -> [CGFloat] {
-        table.headers.indices.map { index in
+        let key = ([sizeCategory.uiCategory.rawValue] + table.headers + table.rows.flatMap { $0 + ["\u{1}"] })
+            .joined(separator: "\u{2}") as NSString
+        if let cached = Self.widthCache.object(forKey: key) { return cached.widths }
+        let widths = table.headers.indices.map { index in
             var widest = textWidth(table.headers[index], weight: .semibold)
             for row in table.rows where index < row.count {
                 widest = max(widest, textWidth(row[index], weight: .regular))
             }
             return max(ceil(widest), 24)
         }
+        Self.widthCache.setObject(CachedWidths(widths), forKey: key)
+        return widths
     }
+
+    private final class CachedWidths: NSObject {
+        let widths: [CGFloat]
+        init(_ widths: [CGFloat]) { self.widths = widths }
+    }
+
+    private static let widthCache: NSCache<NSString, CachedWidths> = {
+        let cache = NSCache<NSString, CachedWidths>()
+        cache.countLimit = 128
+        return cache
+    }()
 
     private var caretWidth: CGFloat {
         ("\u{2007}▍" as NSString).size(withAttributes: [.font: font(.subheadline)]).width
@@ -409,12 +428,35 @@ private struct MarkdownInlineText: UIViewRepresentable {
     }
 
     func sizeThatFits(_ proposal: ProposedViewSize, uiView: MarkdownTextView, context: Context) -> CGSize? {
-        let width = proposal.width ?? uiView.attributedText.size().width
-        let fitted = uiView.sizeThatFits(CGSize(width: max(width, 1), height: .greatestFiniteMagnitude))
+        let width = max(proposal.width ?? uiView.attributedText.size().width, 1)
+        // TextKit layout is the expensive part of every bubble and table
+        // cell, and SwiftUI asks again on each pass through the transcript's
+        // stack. The same text, font, caret and width always fit the same
+        // way; colour, fade and caret opacity do not change the size.
+        let key = "\(width)\u{1}\(font.fontDescriptor.hash)\u{1}\(font.pointSize)\u{1}\(caret)\u{1}\(alignment == nil)\u{1}\(source)" as NSString
+        let fitted: CGSize
+        if let cached = Self.sizeCache.object(forKey: key) {
+            fitted = cached.size
+        } else {
+            fitted = uiView.sizeThatFits(CGSize(width: width, height: .greatestFiniteMagnitude))
+            Self.sizeCache.setObject(CachedSize(fitted), forKey: key, cost: source.utf8.count)
+        }
         // A table column supplies a fixed width. Returning TextKit's tighter
         // glyph width would leave each row with different accessible bounds.
-        return alignment == nil ? fitted : CGSize(width: max(width, 1), height: fitted.height)
+        return alignment == nil ? fitted : CGSize(width: width, height: fitted.height)
     }
+
+    private final class CachedSize: NSObject {
+        let size: CGSize
+        init(_ size: CGSize) { self.size = size }
+    }
+
+    private static let sizeCache: NSCache<NSString, CachedSize> = {
+        let cache = NSCache<NSString, CachedSize>()
+        cache.countLimit = 2_048
+        cache.totalCostLimit = 4 << 20
+        return cache
+    }()
 
     static func styled(_ parsed: AttributedString, font: UIFont, ink: UIColor, muted: Bool, struck: Bool, caret: Bool, caretAlpha: CGFloat = 1, fade: Int = 0) -> NSAttributedString {
         let result = NSMutableAttributedString(string: "")

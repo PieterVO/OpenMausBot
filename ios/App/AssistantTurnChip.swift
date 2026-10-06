@@ -44,6 +44,7 @@ struct AssistantTurnChip: View {
                         chat: chat, message: message, endsRun: index == turn.messages.count - 1,
                         startsRun: index == 0, openLink: openLink, openThread: openThread
                     )
+                    .equatable()
                     .id(message.id)
                     .onAppear {
                         if revealedMessageId == message.id { scrollToMessage?(message.id) }

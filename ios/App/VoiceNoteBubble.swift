@@ -199,7 +199,7 @@ struct VoiceNoteBubble: View {
     var tint: Color? = nil
     var color: String? = nil
 
-    @EnvironmentObject private var session: Session
+    @Environment(\.sessionActions) private var session
     @EnvironmentObject private var liveCall: LiveCallController
     @Environment(\.botTintColor) private var botTintColor
     @StateObject private var player = VoiceNotePlayer()
@@ -293,7 +293,7 @@ struct VoiceNoteBubble: View {
         .accessibilityIdentifier("voice-note")
         .task(id: "\(note.path)#\(attempt)") {
             guard player.loadedDuration == nil, !loadFailed else { return }
-            guard let data = await session.voiceNoteData(for: note), !Task.isCancelled else {
+            guard let data = await session?.voiceNoteData(for: note), !Task.isCancelled else {
                 if !Task.isCancelled {
                     loadFailed = true
                     loading = false

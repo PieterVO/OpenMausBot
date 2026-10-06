@@ -32,6 +32,8 @@ struct ChatListView: View {
     @State private var creatingThreads = Set<String>()
     @State private var managingThreads: Chat?
     @FocusState private var searchFocused: Bool
+    /// Fleet-wide summaries and Updates, once per state change (HomeMemo).
+    @State private var memo = HomeMemo()
 
     /// Space between the header's glass buttons and whatever the list
     /// starts with, so a first section title is never tucked under them.
@@ -123,7 +125,7 @@ struct ChatListView: View {
             .overlay(alignment: .top) {
                 if CompanionLayout.supportsIslandPresentation {
                     NeedsYouIsland(
-                        update: session.state.updates(detail: activity).first { $0.kind == .needsYou }
+                        update: memo.updates(session, activity: activity).first { $0.kind == .needsYou }
                     ) { chat in path.append(chat) }
                 }
             }
@@ -305,7 +307,7 @@ struct ChatListView: View {
 
     @ViewBuilder
     private var rosterSections: some View {
-        let allSummaries = session.state.chatSummaries(activity: activity)
+        let allSummaries = memo.summaries(session, activity: activity)
         let waiting = waitingChats
         let attention = self.attention
         if !attention.isEmpty {
@@ -672,7 +674,7 @@ struct ChatListView: View {
     }
 
     private var updatesButton: some View {
-        UpdatesPill(updates: session.state.updates(detail: activity)) {
+        UpdatesPill(updates: memo.updates(session, activity: activity)) {
             Haptics.selection()
             showingUpdates = true
         }
@@ -737,7 +739,7 @@ struct ChatListView: View {
     private var density: RosterDensity { RosterDensity(stored: rosterDensity) }
 
     private var chats: [ChatSummary] {
-        let all = session.state.chatSummaries(activity: activity)
+        let all = memo.summaries(session, activity: activity)
         guard !query.isEmpty else {
             // rooms live in the strip; the list is bots
             return all.filter { if case .bot = $0.chat { return true } else { return false } }

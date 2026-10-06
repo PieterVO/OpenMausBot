@@ -28,6 +28,46 @@ From `ios/`, run `swift test`. In particular:
 The 100-frame limit bounds each staging batch, not the stream's entire
 downstream backlog. No event is dropped to enforce a buffering limit.
 
+## What keeps the main thread free (October 2026)
+
+- **Token deliveries are quiet.** A delivery that only carries
+  `content.delta` frames folds into `Session.state` without publishing it
+  (`Session.applyStreamBatch`). The text reaches the screen through
+  `Session.liveText`, whose per-thread `LiveText` objects only `LiveTail` (the
+  streaming bubble, thinking row and typing dots) and `LiveStatusReader` (the
+  Hidden status line) observe. Tokens for one bot no longer rebuild the home
+  list, the open chat's rows or any other observer. `statePublisher` replaces
+  `$state` for widgets, Live Activities, Walkie and Live calls; it does not
+  emit for token-only deliveries, which none of them read.
+- **Rows are compared, not rebuilt.** `MessageRow` and `ActivityRunChip` are
+  `Equatable` and used with `.equatable()`; rows read the session through the
+  non-observing `sessionActions` environment value and receive what they draw
+  (pending edit, routine link) as inputs. Attachments, voice notes and
+  screenshots fetch through the same handle. Option and secret cards still
+  rebuild with their chat.
+- **Derived values are memoized per published change.** `Session.stateVersion`
+  keys `TranscriptMemo` (the visible branch and its fold) and `HomeMemo` (chat
+  summaries and Updates). Plans are parsed only for todo/plan tools or inputs
+  whose first key is a list, once per input. `BotTint` resolves each role and
+  colour once.
+- **Continuous motion runs in the render server.** Working arcs and the plan's
+  active ring are `SpinningArc` (a `CAShapeLayer` with one infinite
+  `CABasicAnimation`); the reply reveal ticks at 30 fps; Markdown remembers
+  text measurements and table column widths.
+
+Measured on the iPhone 18 Pro simulator (Debug build, synthetic fixtures),
+main-thread busy share from 1 s `sample` captures:
+
+| Scenario | Before | After |
+| --- | --- | --- |
+| Busy fleet (20 bots, ~400 tokens/s), chat open and idle | 100% | 17% |
+| Busy fleet, home list on screen | 100% (saturated; 46% once tokens were quiet, from arcs committing every frame) | 14% |
+| Busy fleet, typing 180 characters | did not complete (main thread saturated) | completed in 4.8 s; remaining cost is UIKit keyboard input |
+| One reply streaming into the open chat (`-chat-stream-preview`) | 52–61% | 48%, peaks during table reveal |
+
+A simulator Debug build overstates absolute cost; compare rows, not numbers
+across devices.
+
 ## Native acceptance
 
 Generate the project with `cd ios && xcodegen generate`. Create a disposable
@@ -58,7 +98,8 @@ progress rather than assuming the producer kept its target rate. Frames
 go through the same batching and atomic Session fold as the real stream;
 there is no API client, token, provider, microphone or message send.
 
-The native test types into a short Gmail chat, switches to iCloud, types a
+The native test scrolls past the twenty working fixture bots in Needs
+attention, then types into a short Gmail chat, switches to iCloud, types a
 separate draft and returns. It checks both draft isolation and the correct
 transcript, with cursor advancement proving the flood remained active during
 the actions. Per-action elapsed times and a screenshot are attached. Existing

@@ -76,7 +76,11 @@ final class StreamPacer: ObservableObject {
     private func run() {
         guard link == nil else { return }
         let link = CADisplayLink(target: Ticker(self), selector: #selector(Ticker.tick(_:)))
-        link.preferredFrameRateRange = CAFrameRateRange(minimum: 30, maximum: 60, preferred: 60)
+        // Each tick re-lays the reply's last paragraph and commits it. At 30
+        // a second a reveal of ~80 characters/s still adds two or three per
+        // frame under an eight-character fade, which reads as continuous,
+        // for half the main-thread work of 60.
+        link.preferredFrameRateRange = CAFrameRateRange(minimum: 24, maximum: 30, preferred: 30)
         link.add(to: .main, forMode: .common)
         self.link = link
     }
@@ -145,8 +149,10 @@ struct RevealedMarkdown: View {
     }
 }
 
-/// How a bot's settled reply first reaches the screen.
-enum ReplyArrival {
+/// How a bot's settled reply first reaches the screen. Equatable (a pacer by
+/// identity) so the environment value reads as unchanged between renders and
+/// does not invalidate every reply bubble that reads it.
+enum ReplyArrival: Equatable {
     /// History, a page of older messages, or anything already on screen.
     case settled
     /// It arrived live but never streamed visibly (Hidden detail): it types
@@ -155,6 +161,14 @@ enum ReplyArrival {
     /// It is the reply that was just streaming: keep revealing from where
     /// the stream had got to, so the handover is invisible.
     case continuing(StreamPacer)
+
+    static func == (lhs: ReplyArrival, rhs: ReplyArrival) -> Bool {
+        switch (lhs, rhs) {
+        case (.settled, .settled), (.revealed, .revealed): return true
+        case let (.continuing(left), .continuing(right)): return left === right
+        default: return false
+        }
+    }
 }
 
 /// The live reply's pacer outlives the streaming bubble. Owned by the chat
@@ -273,6 +287,19 @@ final class TranscriptMemo {
     private var detail: ActivityDetail?
     private var showSummaries = false
     private var cached: [TranscriptRow] = []
+    private var visibleKey: (version: Int, threadId: String)?
+    private var visible: [Message] = []
+
+    /// The thread's visible branch, resolved once per published state change.
+    /// Resolving it walks the thread through a dictionary of every message;
+    /// the chat reads it a dozen times per render. Returning the same array
+    /// also lets the row memo below compare it by identity.
+    func visibleTranscript(_ session: Session, threadId: String) -> [Message] {
+        if let key = visibleKey, key.version == session.stateVersion, key.threadId == threadId { return visible }
+        visible = session.state.visibleTranscript(forThread: threadId)
+        visibleKey = (session.stateVersion, threadId)
+        return visible
+    }
 
     func rows(for messages: [Message], detail: ActivityDetail, showSummaries: Bool) -> [TranscriptRow] {
         if detail == self.detail, showSummaries == self.showSummaries, messages == self.messages {

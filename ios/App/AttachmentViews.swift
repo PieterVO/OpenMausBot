@@ -110,7 +110,7 @@ struct TranscriptAttachmentView: View {
     var foreground: Color = .primary
     var color: String? = nil
 
-    @EnvironmentObject private var session: Session
+    @Environment(\.sessionActions) private var sessionActions
     @Environment(\.botTintColor) private var botTintColor
     @State private var thumbnail: UIImage?
     @State private var thumbnailLoading = false
@@ -294,6 +294,7 @@ struct TranscriptAttachmentView: View {
         errorMessage = nil
         defer { thumbnailLoading = false }
         do {
+            guard let session = sessionActions else { return }
             let downloaded = try await session.fetchAttachment(
                 threadId: threadId,
                 messageId: messageId,
@@ -336,6 +337,7 @@ struct TranscriptAttachmentView: View {
                 unfinishedItem?.cleanUp()
             }
             do {
+                guard let session = sessionActions else { return }
                 let downloaded = try await session.prepareAttachmentPreview(
                     threadId: threadId,
                     messageId: messageId,

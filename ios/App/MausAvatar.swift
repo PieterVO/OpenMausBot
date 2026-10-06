@@ -80,7 +80,10 @@ struct MausAvatar: View {
 
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Environment(\.scenePhase) private var scenePhase
-    @State private var engine = MausFaceEngine()
+    /// Created once per mounted face: `@State`'s initial value is evaluated on
+    /// every init of the view (and discarded after the first), so a roster
+    /// re-render used to allocate an engine per avatar each time.
+    @StateObject private var engine = MausFaceEngine()
 
     var body: some View {
         // Even an opted-in face stops when the app is not active: nothing is
@@ -123,7 +126,7 @@ struct MausFaceStill: View {
 
 /// The face, frame by frame. One per drawn mascot; holds the morph in
 /// progress, the blink, and when the next expression or blink is due.
-final class MausFaceEngine {
+final class MausFaceEngine: ObservableObject {
     private(set) var state: MausState = .idle
     private var expression = 0
     private var currentRings: [[CGPoint]] = [MausFaceData.ring(0, eye: 0), MausFaceData.ring(0, eye: 1)]

@@ -3,11 +3,17 @@ import SwiftUI
 
 /// Reduced activity is a reversible timeline, not a second kind of receipt.
 /// Failure and plan rows break runs in the core transcript projection.
-struct ActivityRunChip: View {
+struct ActivityRunChip: View, Equatable {
     let items: [Message]
     var openThread: ((ThreadRef) -> Void)? = nil
     var runID: String? = nil
     var busy = false
+
+    /// Compared before the body runs (`.equatable()`): the thread link
+    /// closure is the chat's and never changes what is drawn.
+    static func == (lhs: ActivityRunChip, rhs: ActivityRunChip) -> Bool {
+        lhs.items == rhs.items && lhs.runID == rhs.runID && lhs.busy == rhs.busy
+    }
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var expanded = false
 

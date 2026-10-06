@@ -22,6 +22,7 @@ struct CompanionApp: App {
         WindowGroup {
             RootView()
                 .environmentObject(session)
+                .environment(\.sessionActions, session)
                 .environmentObject(liveCall)
                 // One modifier is the whole language seam. SwiftUI resolves a
                 // `LocalizedStringKey` against the environment's locale, so
