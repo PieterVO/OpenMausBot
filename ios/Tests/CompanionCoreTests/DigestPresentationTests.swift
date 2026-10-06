@@ -52,6 +52,19 @@ final class DigestPresentationTests: XCTestCase {
         XCTAssertNil(DigestPresentation(message: structured(coverage: .none)).coverageNote)
     }
 
+    func testCopiedSummaryUsesSingularCounts() {
+        var message = structured(tools: [.init(name: "Read", count: 1, failed: 0)], duration: 0,
+                                 files: .init(changed: ["one"], added: [], deleted: [], truncated: 1),
+                                 usage: .init(input: 1, output: 0))
+        message.digest?.toolsDropped = 1
+        message.digest?.memoryDropped = 1
+        let copy = DigestPresentation(message: message).plainText
+        for singular in ["+1 more tool", "+1 more path", "+1 more memory change", "1 token"] {
+            XCTAssertTrue(copy.contains(singular), singular)
+            XCTAssertFalse(copy.contains(singular + "s"), singular)
+        }
+    }
+
     func testStructuredDigestWinsOverContradictoryLegacyText() {
         var message = structured()
         message.text = "[digest] · tools: Wrong ×99 (5 failed) · files: changed wrong.swift"

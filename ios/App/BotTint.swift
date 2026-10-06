@@ -60,7 +60,7 @@ enum BotTint {
     static func glyphFill(_ color: String?) -> Color {
         Color(uiColor: UIColor { traits in
             let dark = traits.userInterfaceStyle == .dark
-            return foreground(color, dark: dark).withAlphaComponent(dark ? 0.20 : 0.14)
+            return foreground(color, dark: dark).withAlphaComponent(dark ? 0.26 : 0.20)
         })
     }
 
