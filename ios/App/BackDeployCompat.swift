@@ -204,6 +204,19 @@ extension View {
             self
         }
     }
+
+    /// Runs `action` when a scroll the person started comes to rest.
+    /// iOS 18 only, like `onUserScrollCompat`; below that it never fires.
+    @ViewBuilder
+    func onUserScrollSettledCompat(_ action: @escaping () -> Void) -> some View {
+        if #available(iOS 18.0, *) {
+            onScrollPhaseChange { old, new in
+                if new == .idle, old != .idle { action() }
+            }
+        } else {
+            self
+        }
+    }
 }
 
 /// `onChange` when the call site needs the old value too.

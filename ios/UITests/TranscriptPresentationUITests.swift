@@ -101,7 +101,8 @@ final class TranscriptPresentationUITests: XCTestCase {
     @MainActor
     func testAnswerStreamWinsWhileReasoningRemainsAvailable() {
         let app = launchPreview(detail: "full", reasoning: true, answer: true)
-        XCTAssertTrue(contains("Here’s what I found so far.", in: app))
+        // The answer reveals at a steady pace rather than in one frame.
+        XCTAssertTrue(app.staticTexts.matching(NSPredicate(format: "label CONTAINS %@", "Here’s what I found so far.")).firstMatch.waitForExistence(timeout: 3))
         let thinking = app.buttons["thinking-row"]
         XCTAssertTrue(thinking.waitForExistence(timeout: 5))
         XCTAssertTrue(thinking.label.contains("Thought for"), thinking.label)

@@ -74,8 +74,12 @@ struct ChatView: View {
     /// a scroll offset, because iOS 16 has no scroll-position API.
     @State private var viewportBottom: CGFloat = 0
     @State private var showsJumpToLatest = false
-    @State private var renderedMessageIDs: [String] = []
-    @State private var arrivingMessageIDs = Set<String>()
+    /// The head ids of the rows drawn last render, in order. Rows, not
+    /// messages: at Hidden a reply can already be in the store as live
+    /// narration and only become a row when its turn settles.
+    @State private var renderedRowIDs: [String] = []
+    /// The live reply's pacer and how each new reply arrives (see LiveReveal).
+    @State private var liveReveal = LiveReveal()
     @State private var hasRenderedTranscript = false
     @State private var newBotMessagesBelow = false
     @State private var transcriptWidth: CGFloat = 360
@@ -162,9 +166,35 @@ struct ChatView: View {
     private var liveStatusLine: String? {
         guard current.busy, detail == .hidden else { return nil }
         if let streaming = session.state.streaming[threadId], !streaming.isEmpty {
-            return String(streaming.suffix(240))
+            // One quiet line of words: rendered Markdown means nothing here,
+            // and raw asterisks and table pipes read as noise.
+            return MarkdownPlain.line(String(streaming.suffix(320)))
         }
         return live.latest
+    }
+
+    /// A row that joined the end of the transcript since the last render:
+    /// after the last row we had drawn, and never drawn before. Older pages
+    /// prepended above, and the first page, are never fresh.
+    private func isFreshlyAppended(_ id: String, in transcript: [TranscriptRow]) -> Bool {
+        guard hasRenderedTranscript, !renderedRowIDs.contains(id),
+              let last = renderedRowIDs.last,
+              let boundary = transcript.firstIndex(where: { $0.head.id == last }),
+              let index = transcript.firstIndex(where: { $0.head.id == id })
+        else { return false }
+        return index > boundary
+    }
+
+    /// How a bot's text reply reaches the screen: continuing the reveal of
+    /// the stream it settles out of, typing itself in when it never streamed
+    /// visibly, or simply there.
+    private func replyArrival(for message: Message, in transcript: [TranscriptRow]) -> ReplyArrival {
+        guard message.role == .bot, message.kind == .text else { return .settled }
+        return liveReveal.arrival(
+            for: message.id,
+            fresh: isFreshlyAppended(message.id, in: transcript),
+            animates: !reduceMotion && !UIAccessibility.isVoiceOverRunning
+        )
     }
 
     private var livePlan: (id: String, plan: TodoPlan)? {
@@ -264,6 +294,7 @@ struct ChatView: View {
                                         openLink: openLink,
                                         openThread: openThread
                                     )
+                                    .environment(\.replyArrival, replyArrival(for: message, in: transcript))
                                 case let .activityRun(items):
                                     ActivityRunChip(items: items, openThread: openThread, runID: row.id, busy: current.busy)
                                 case let .assistantTurn(turn):
@@ -280,7 +311,11 @@ struct ChatView: View {
                             }
                             .id(row.id)
                             .padding(.top, index == 0 ? 0 : rowGap(at: index, in: transcript))
-                            .modifier(MessageArrival(animate: arrivingMessageIDs.contains(row.head.id), mine: row.role == .user))
+                            .modifier(MessageArrival(
+                                animate: isFreshlyAppended(row.head.id, in: transcript) && !liveReveal.isHandedOver(row.head.id),
+                                soft: liveReveal.isRevealing(row.head.id),
+                                mine: row.role == .user
+                            ))
                         }
 
                         // The reply as it is typed. It sits after the last
@@ -311,7 +346,14 @@ struct ChatView: View {
                                         }
                                 }
                                 if detail != .hidden, let answer, !answer.isEmpty {
-                                    StreamingBubble(text: answer, color: current.color, namespace: liveBubbleNamespace)
+                                    StreamingBubble(
+                                        text: answer,
+                                        color: current.color,
+                                        namespace: liveBubbleNamespace,
+                                        // Re-entering a chat mid-reply shows what already arrived
+                                        // at once; only what streams from here on is paced.
+                                        pacer: liveReveal.streamPacer(initiallyShowing: answer.count > 40 ? answer.count : 0)
+                                    )
                                         .id(Self.liveBubbleId)
                                 } else if detail == .hidden || session.state.reasoning[threadId]?.isEmpty != false {
                                     TypingIndicatorView(color: current.color)
@@ -330,7 +372,15 @@ struct ChatView: View {
                             // Only a change of answer touches state: this
                             // fires on every scrolled frame.
                             .onGeometryChange(for: CGFloat.self) { $0.frame(in: .global).maxY } action: { end in
-                                let reading = end - viewportBottom > Self.jumpToLatestThreshold
+                                let overflow = end - viewportBottom
+                                // A reply growing line by line (streaming, or typing itself
+                                // in once settled) keeps the end in view while the reader
+                                // follows; one who dragged away is left where they are.
+                                if overflow > 1, !readerScrolled, liveReveal.pinsEnd() {
+                                    proxy.scrollTo(Self.transcriptEndId, anchor: .bottom)
+                                    return
+                                }
+                                let reading = overflow > Self.jumpToLatestThreshold
                                 if reading != showsJumpToLatest {
                                     withAnimation(reduceMotion ? nil : .easeOut(duration: 0.18)) { showsJumpToLatest = reading }
                                 }
@@ -390,6 +440,7 @@ struct ChatView: View {
                                 proxy.scrollTo(Self.transcriptEndId, anchor: .bottom)
                             }
                             newBotMessagesBelow = false
+                            readerScrolled = false
                         } label: {
                             HStack(spacing: 8) {
                                 if newBotMessagesBelow {
@@ -416,15 +467,14 @@ struct ChatView: View {
                     }
                     planScrollTarget = nil
                 }
-                .onValueChange(of: messages.map(\.id), initial: true) { ids in
-                    if hasRenderedTranscript, let last = renderedMessageIDs.last, let boundary = ids.firstIndex(of: last) {
-                        let appended = ids.suffix(from: boundary + 1).filter { !renderedMessageIDs.contains($0) }
-                        arrivingMessageIDs.formUnion(appended)
-                        if showsJumpToLatest, messages.contains(where: { appended.contains($0.id) && $0.role == .bot }) {
+                .onValueChange(of: transcript.map(\.head.id), initial: true) { ids in
+                    if hasRenderedTranscript, let last = renderedRowIDs.last, let boundary = ids.firstIndex(of: last) {
+                        let appended = ids.suffix(from: boundary + 1).filter { !renderedRowIDs.contains($0) }
+                        if showsJumpToLatest, transcript.contains(where: { appended.contains($0.head.id) && $0.role == .bot }) {
                             newBotMessagesBelow = true
                         }
                     }
-                    renderedMessageIDs = ids
+                    renderedRowIDs = ids
                     hasRenderedTranscript = true
                 }
                 .task {
@@ -499,12 +549,18 @@ struct ChatView: View {
                     proxy.scrollTo(current.busy ? Self.transcriptEndId : last.id, anchor: .bottom)
                 }
                 .onUserScrollCompat { readerScrolled = true }
+                // A scroll that comes to rest at the end means following again:
+                // new rows and a streaming reply keep the end in view.
+                .onUserScrollSettledCompat { if !showsJumpToLatest { readerScrolled = false } }
                 // Follow the text as it arrives. Keyed on length rather than
                 // the string so this fires once per delta batch, and without
                 // animation — animating every token turns a smooth stream
                 // into a stutter, because each scroll interrupts the last.
                 .onValueChange(of: session.state.streaming[threadId]?.count ?? 0) { length in
-                    guard length > 0 else { return }
+                    // The stream ended. A reply that settled on this frame has
+                    // already claimed its pacer while its row was built.
+                    guard length > 0 else { liveReveal.endStream(); return }
+                    guard !readerScrolled else { return }
                     proxy.scrollTo(Self.liveBubbleId, anchor: .bottom)
                 }
                 .onValueChange(of: session.state.reasoning[threadId]?.count ?? 0) { length in
@@ -589,8 +645,8 @@ struct ChatView: View {
             if unread { Task { await session.markRead(readChat) } }
         }
         .onValueChangePair(of: threadId) { previous, next in
-            renderedMessageIDs = []
-            arrivingMessageIDs = []
+            renderedRowIDs = []
+            liveReveal.reset()
             hasRenderedTranscript = false
             newBotMessagesBelow = false
             dictation.stop()
@@ -2045,6 +2101,7 @@ struct TextBubble: View {
     var showsSpeaker = true
     @Environment(\.conversationWidth) private var conversationWidth
     @Environment(\.layoutDirection) private var layoutDirection
+    @Environment(\.replyArrival) private var replyArrival
     let openLink: (URL, Message) -> OpenURLAction.Result
 
     private var attachedContent: AttachedMessageContent {
@@ -2127,8 +2184,9 @@ struct TextBubble: View {
                             .fixedSize(horizontal: false, vertical: true)
                     }
                 } else {
-                    MarkdownText(
-                        source: message.text ?? "",
+                    ReplyText(
+                        text: message.text ?? "",
+                        arrival: replyArrival,
                         scrollIdentifier: "message-\(message.id)-scroll"
                     ) { url in
                         openLink(url, message)
@@ -2869,29 +2927,26 @@ struct ScreenShot: View {
 
 /// The reply as it is being typed, styled to match the settled bubble it is
 /// about to become — the handover should be invisible, and any difference in
-/// padding or corner radius reads as the message jumping on arrival.
+/// padding or corner radius reads as the message jumping on arrival. The
+/// settled bubble takes over this bubble's pacer and finishes the reveal
+/// from the same character, so the last words never flush in at once.
 ///
 /// A caret rather than a spinner: a spinner says "something is happening
 /// somewhere", which the reader already knows. A caret at the end of real
-/// text says how far along it is.
-///
-/// The caret does not blink, deliberately. The obvious way to blink it —
-/// `withAnimation(.repeatForever) { flag.toggle() }` in `onAppear` — animates
-/// the change once and then sits still, and a caret that blinks twice and
-/// stops looks more broken than one that never blinks. A correct version
-/// animates opacity on a separate view, which needs a device to get right;
-/// static is honest until then.
+/// text says how far along it is. It breathes while the stream is open,
+/// driven by the pacer's display link, and holds still with Reduce Motion.
 struct StreamingBubble: View {
     let text: String
     var color: String = "blue"
     let namespace: Namespace.ID
+    @ObservedObject var pacer: StreamPacer
     @Environment(\.layoutDirection) private var layoutDirection
     @Environment(\.conversationWidth) private var conversationWidth
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     var body: some View {
         HStack(alignment: .bottom, spacing: 0) {
-            MarkdownText(source: text, caret: true)
+            RevealedMarkdown(text: text, pacer: pacer, caret: true, final: false)
                 .foregroundStyle(Color.primary)
                 .padding(.horizontal, 14)
                 .padding(.vertical, 9)
@@ -2901,6 +2956,12 @@ struct StreamingBubble: View {
                 .matchedGeometryEffect(id: "live-bubble", in: namespace, properties: reduceMotion ? [] : .frame)
             Spacer(minLength: conversationWidth * 0.20)
         }
+        .onAppear { advance(to: text.count) }
+        .onValueChange(of: text.count) { advance(to: $0) }
+    }
+
+    private func advance(to count: Int) {
+        pacer.update(target: count, breathing: true, animated: !reduceMotion && !UIAccessibility.isVoiceOverRunning)
     }
 }
 

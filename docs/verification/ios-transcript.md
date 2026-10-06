@@ -108,6 +108,35 @@ in light/dark. Semantic type, VoiceOver labels, logical alignment and static
 Reduce Motion fallbacks are part of the component contract; physical-device
 haptic timing and real pairing are not proved by synthetic simulator scenes.
 
+## Live turn and streaming motion
+
+`-store-preview -chat-showcase-preview -open-first -chat-stream-preview`
+plays one whole live turn into the showcase chat through the real store folds
+(`Session.startStreamPreview`): a send, typing, reasoning deltas, a narration
+stream, a TodoWrite plan ticking off, two steps, a Markdown reply streamed in
+uneven batches (2–22 characters at 35–140 ms, like network batches), the
+settled reply and its digest. Leave out `-chat-showcase-target` so the chat
+follows the end the way a reader at the bottom sees it.
+
+What it proves, by Activity level:
+
+- **Full / Reduced** — the reply reveals at an even pace (`StreamPacer`, a
+  display link; `RevealPacing` absorbs a burst on a 0.3 s time constant), its
+  newest characters ink in, the caret breathes, half-typed bold/code render
+  styled (`MarkdownPartial.closingOpenSpans`) and tables arrive a whole row
+  at a time (`MarkdownPartial.revealedPrefix`). When the reply settles, its
+  bubble takes over the stream's pacer: no flush, no second arrival.
+- **Hidden** — the status line reads plain words (`MarkdownPlain.line`), then
+  the settled reply types itself into the chat in under a second
+  (`ReplyArrival.revealed`) while the chat keeps its end in view.
+- Following: a reader who drags away is never pulled back by the stream; one
+  whose scroll comes to rest at the end follows again (iOS 18+ scroll
+  phases). Reduce Motion and VoiceOver show replies whole.
+
+Record it with `xcrun simctl io "$SIMULATOR_ID" recordVideo --codec=h264 out.mp4`
+around the launch (stop with Ctrl-C after ~28 s) at `-companion.prefs.activityDetail
+full` and `hidden`; review frames at the reply's start, mid-table and settle.
+
 ## Redesign verification — 2026-10-06
 
 - Integrated CompanionCore suite: **928 tests passed, 0 failures**, including

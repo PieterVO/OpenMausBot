@@ -35,6 +35,12 @@ struct MarkdownText: View {
     /// The streaming and settled replies share their layout; the caret is
     /// appended to the final block rather than becoming a separate line.
     var caret: Bool = false
+    /// While a reply is being revealed, its newest characters are still
+    /// "inking in": this many trailing characters of the final text block
+    /// ramp from faint to full. Zero once the reveal has caught up.
+    var fadeTail: Int = 0
+    /// The caret breathes while the stream is open (1 = solid).
+    var caretAlpha: CGFloat = 1
     /// Settled bubbles identify the first table as `message-<id>-scroll`.
     var scrollIdentifier: String? = nil
     var openLink: ((URL) -> OpenURLAction.Result)?
@@ -46,12 +52,16 @@ struct MarkdownText: View {
     init(
         source: String,
         caret: Bool = false,
+        fadeTail: Int = 0,
+        caretAlpha: CGFloat = 1,
         scrollIdentifier: String? = nil,
         color: String? = nil,
         openLink: ((URL) -> OpenURLAction.Result)? = nil
     ) {
         self.source = source
         self.caret = caret
+        self.fadeTail = fadeTail
+        self.caretAlpha = caretAlpha
         self.scrollIdentifier = scrollIdentifier
         self.color = color
         self.openLink = openLink
@@ -66,7 +76,7 @@ struct MarkdownText: View {
             ForEach(Array(blocks.enumerated()), id: \.offset) { item in
                 view(
                     for: item.element,
-                    tail: caret && item.offset == blocks.count - 1,
+                    tail: (caret || fadeTail > 0) && item.offset == blocks.count - 1,
                     scrollIdentifier: item.offset == firstTable ? scrollIdentifier : nil
                 )
                 .padding(.top, spacing(before: item.element, at: item.offset, blocks: blocks))
@@ -116,7 +126,7 @@ struct MarkdownText: View {
             .fixedSize(horizontal: false, vertical: true)
 
         case let .code(language, text):
-            MarkdownCodeBlock(language: language, source: text, caret: tail, color: color ?? botTintColor)
+            MarkdownCodeBlock(language: language, source: text, caret: tail && caret, caretAlpha: caretAlpha, color: color ?? botTintColor)
 
         case .rule:
             Divider().padding(.vertical, 2)
@@ -290,7 +300,13 @@ struct MarkdownText: View {
         alignment: MarkdownTableAlignment? = nil
     ) -> some View {
         let font = font(style, weight: weight, monospacedDigits: monospacedDigits)
-        return MarkdownInlineText(source: text, font: font, ink: tint, muted: muted, struck: struck, caret: tail, alignment: alignment)
+        // Table cells reveal without the fade: a fading cell reads as a
+        // rendering fault inside a grid, not as text arriving.
+        let fade = tail && alignment == nil ? fadeTail : 0
+        return MarkdownInlineText(
+            source: text, font: font, ink: tint, muted: muted, struck: struck,
+            caret: tail && caret, caretAlpha: caretAlpha, fade: fade, alignment: alignment
+        )
             .alignmentGuide(.firstTextBaseline) { $0[.top] + font.ascender }
             .fixedSize(horizontal: false, vertical: true)
     }
@@ -341,6 +357,8 @@ private struct MarkdownInlineText: UIViewRepresentable {
     let muted: Bool
     let struck: Bool
     let caret: Bool
+    var caretAlpha: CGFloat = 1
+    var fade: Int = 0
     let alignment: MarkdownTableAlignment?
     @Environment(\.openURL) private var openURL
     @Environment(\.layoutDirection) private var layoutDirection
@@ -379,11 +397,11 @@ private struct MarkdownInlineText: UIViewRepresentable {
         case .trailing: textAlignment = layoutDirection == .rightToLeft ? .left : .right
         case .center: textAlignment = .center
         }
-        let state = MarkdownTextView.RenderState(source: source, font: font, ink: color, muted: muted, struck: struck, caret: caret, alignment: textAlignment)
+        let state = MarkdownTextView.RenderState(source: source, font: font, ink: color, muted: muted, struck: struck, caret: caret, caretAlpha: caretAlpha, fade: fade, alignment: textAlignment)
         guard view.renderState != state else { return }
         view.renderState = state
         let parsed = MarkdownText.parsedInline(source)
-        view.attributedText = Self.styled(parsed, font: font, ink: color, muted: muted, struck: struck, caret: caret)
+        view.attributedText = Self.styled(parsed, font: font, ink: color, muted: muted, struck: struck, caret: caret, caretAlpha: caretAlpha, fade: fade)
         view.textAlignment = textAlignment
         view.linkTextAttributes = [.foregroundColor: color, .underlineStyle: NSUnderlineStyle.single.rawValue]
         view.accessibilityLabel = String(parsed.characters)
@@ -398,7 +416,7 @@ private struct MarkdownInlineText: UIViewRepresentable {
         return alignment == nil ? fitted : CGSize(width: max(width, 1), height: fitted.height)
     }
 
-    static func styled(_ parsed: AttributedString, font: UIFont, ink: UIColor, muted: Bool, struck: Bool, caret: Bool) -> NSAttributedString {
+    static func styled(_ parsed: AttributedString, font: UIFont, ink: UIColor, muted: Bool, struck: Bool, caret: Bool, caretAlpha: CGFloat = 1, fade: Int = 0) -> NSAttributedString {
         let result = NSMutableAttributedString(string: "")
         for run in parsed.runs {
             let words = String(parsed[run.range].characters)
@@ -436,10 +454,28 @@ private struct MarkdownInlineText: UIViewRepresentable {
                 result.append(NSAttributedString(string: words, attributes: attributes))
             }
         }
+        if fade > 0 { inkIn(result, characters: fade) }
         if caret {
-            result.append(NSAttributedString(string: "\u{2007}▍", attributes: [.font: font, .foregroundColor: UIColor.secondaryLabel]))
+            result.append(NSAttributedString(string: "\u{2007}▍", attributes: [.font: font, .foregroundColor: UIColor.secondaryLabel.withAlphaComponent(caretAlpha)]))
         }
         return result
+    }
+
+    /// The newest `characters` composed characters ramp from 0.3 to full
+    /// alpha, newest faintest, on top of whatever colour each run already has.
+    private static func inkIn(_ text: NSMutableAttributedString, characters: Int) {
+        let string = text.string as NSString
+        var end = string.length
+        var index = 0
+        while end > 0, index < characters {
+            let range = string.rangeOfComposedCharacterSequence(at: end - 1)
+            let alpha = 0.3 + 0.7 * CGFloat(index) / CGFloat(characters)
+            if let colour = text.attribute(.foregroundColor, at: range.location, effectiveRange: nil) as? UIColor {
+                text.addAttribute(.foregroundColor, value: colour.withAlphaComponent(colour.cgColor.alpha * alpha), range: range)
+            }
+            end = range.location
+            index += 1
+        }
     }
 
     final class Coordinator: NSObject, UITextViewDelegate {
@@ -462,6 +498,8 @@ private final class MarkdownTextView: UITextView {
         let muted: Bool
         let struck: Bool
         let caret: Bool
+        let caretAlpha: CGFloat
+        let fade: Int
         let alignment: NSTextAlignment
     }
     var renderState: RenderState?
@@ -514,6 +552,7 @@ private struct MarkdownCodeBlock: View {
     let language: String?
     let source: String
     let caret: Bool
+    var caretAlpha: CGFloat = 1
     let color: String?
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var copied = false
@@ -545,7 +584,7 @@ private struct MarkdownCodeBlock: View {
             .padding(.leading, 12)
             .padding(.trailing, 4)
             ScrollView(.horizontal, showsIndicators: false) {
-                (Text(source) + (caret ? Text("\u{2007}▍").foregroundColor(.secondary) : Text("")))
+                (Text(source) + (caret ? Text("\u{2007}▍").foregroundColor(Color.secondary.opacity(caretAlpha)) : Text("")))
                     .font(.system(.footnote, design: .monospaced))
                     .fixedSize(horizontal: true, vertical: false)
                     .textSelection(.enabled)
@@ -589,6 +628,10 @@ private struct MarkdownTableViewport<Content: View>: View {
         }
         .coordinateSpace(name: coordinateSpace)
         .onPreferenceChange(MarkdownTableFrameKey.self) { contentFrame = $0 }
+        // A table narrower than the bubble ends where its columns do, so the
+        // header row's fill reaches the container's edge instead of stopping
+        // short of an empty band. Wider tables still take the bubble and scroll.
+        .frame(maxWidth: contentFrame.width > 0 ? contentFrame.width : nil, alignment: .leading)
         .background(BotTint.inset)
         .overlay(alignment: .trailing) {
             GeometryReader { proxy in
