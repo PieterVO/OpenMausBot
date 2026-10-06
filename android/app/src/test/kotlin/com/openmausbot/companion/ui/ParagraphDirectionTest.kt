@@ -285,11 +285,10 @@ class ParagraphDirectionTest {
         }
         assertEquals(
             listOf(
-                "DATA TABLE", "2 rows",
                 "LANGUAGE", "YEAR",
                 "Python", "1991",
                 "Java", "1995",
-                "Copy CSV",
+                "Copy table as CSV",
             ),
             spoken(compose.onRoot().fetchSemanticsNode()),
             "the reading order is row-major, mirrored or not",

@@ -24,12 +24,13 @@ import org.junit.Test
 import org.junit.Rule
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
+import org.robolectric.RuntimeEnvironment
 import org.robolectric.annotation.Config
 import org.robolectric.annotation.GraphicsMode
 
 /** Native production composer components; no transport or user data is involved. */
 @RunWith(RobolectricTestRunner::class)
-@Config(sdk = [34], qualifiers = "w411dp-h891dp-mdpi")
+@Config(sdk = [34], qualifiers = "w411dp-h891dp-xxhdpi")
 @GraphicsMode(GraphicsMode.Mode.NATIVE)
 @OptIn(ExperimentalTestApi::class)
 class ConversationComposerScreenshotTest {
@@ -39,16 +40,19 @@ class ConversationComposerScreenshotTest {
     @Test fun largeTypeRtlComposerCards() = capture(true, rtl = true, fontScale = 1.3f)
 
     private fun capture(dark: Boolean, rtl: Boolean = false, fontScale: Float = 1f) {
+        RuntimeEnvironment.setFontScale(fontScale)
         val scene = WiringScene(Connection(id = "composer-showcase", name = "Offline composer", host = "127.0.0.1", port = 1))
+        val skin = if (dark) AppearanceSkin.MIDNIGHT else AppearanceSkin.LINEN
+        scene.environment.chatPreferences.setAppearanceSkin(skin)
         val attachment = PendingMessageAttachment(id = "offline-document", data = "Your weekend route".toByteArray(), name = "Weekend notes.pdf", mime = "application/pdf", kind = PendingMessageAttachment.Kind.FILE)
         compose.setContent {
             val density = LocalDensity.current
             CompositionLocalProvider(LocalCompanion provides scene.environment,
                 LocalLayoutDirection provides if (rtl) LayoutDirection.Rtl else LayoutDirection.Ltr,
                 LocalDensity provides Density(density.density, fontScale)) {
-                CompanionTheme(darkTheme = dark) {
+                CompanionTheme(skin = skin) {
                     CompositionLocalProvider(LocalConversationTint provides conversationTint("green")) {
-                        Surface(Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) {
+                        Surface(Modifier.fillMaxSize()) {
                             Column(Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 36.dp), verticalArrangement = Arrangement.spacedBy(24.dp)) {
                                 MausAvatar("green", size = 64.dp)
                                 Text("Ready when you are", style = MaterialTheme.typography.titleLarge)

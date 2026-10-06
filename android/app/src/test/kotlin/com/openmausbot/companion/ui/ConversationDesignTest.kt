@@ -7,14 +7,16 @@ import kotlin.test.assertEquals
 import kotlin.test.assertTrue
 
 class ConversationDesignTest {
-    @Test fun `contact ink and filled actions pass contrast in all skins`() {
+    @Test fun `contact surfaces separate and ink actions pass contrast in all skins`() {
         val colors = listOf("green", "blue", "red", "orange", "purple", "cyan", "pink", "yellow", "teal", "coral", "unknown")
         for (skin in AppearanceSkin.entries) for (color in colors) {
-            val tint = ConversationTint.create(Color(MausPalette.argb(color)), Color(cssHexToArgb(skin.colors.card)), skin.isDark)
+            val background = Color(cssHexToArgb(skin.colors.app))
+            val tint = ConversationTint.create(Color(MausPalette.argb(color)), background, skin.isDark)
             fun contrast(a: Color, b: Color): Float {
                 val x = a.luminance(); val y = b.luminance()
                 return (maxOf(x, y) + 0.05f) / (minOf(x, y) + 0.05f)
             }
+            assertTrue(contrast(tint.theirs, background) >= if (skin.isDark) 1.25f else 1.20f, "$skin / $color surface")
             assertTrue(contrast(tint.ink, tint.theirs) >= 4.5f, "$skin / $color ink")
             assertTrue(contrast(tint.ink, tint.actionText) >= 4.5f, "$skin / $color action")
         }

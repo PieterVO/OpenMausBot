@@ -3,7 +3,6 @@ package com.openmausbot.companion.ui
 import android.graphics.Bitmap
 import androidx.activity.ComponentActivity
 import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalDensity
@@ -16,6 +15,11 @@ import androidx.compose.runtime.getValue
 import androidx.compose.ui.MotionDurationScale
 import androidx.compose.ui.test.*
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
+import androidx.compose.ui.semantics.SemanticsActions
+import androidx.compose.ui.semantics.SemanticsProperties
+import androidx.compose.ui.unit.Dp
+import androidx.compose.ui.unit.dp
+import com.openmausbot.companion.R
 import com.openmausbot.companion.core.*
 import java.io.File
 import kotlinx.coroutines.flow.MutableSharedFlow
@@ -25,12 +29,13 @@ import okhttp3.mockwebserver.*
 import org.junit.*
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
+import org.robolectric.RuntimeEnvironment
 import org.robolectric.annotation.Config
 import org.robolectric.annotation.GraphicsMode
 
 /** Every pixel is the production ChatScreen; every computer response is synthetic and loopback-only. */
 @RunWith(RobolectricTestRunner::class)
-@Config(sdk = [34], qualifiers = "w411dp-h891dp-mdpi")
+@Config(sdk = [34], qualifiers = "w411dp-h891dp-xxhdpi")
 @GraphicsMode(GraphicsMode.Mode.NATIVE)
 @OptIn(ExperimentalTestApi::class)
 class ChatShowcaseScreenshotTest {
@@ -121,8 +126,10 @@ class ChatShowcaseScreenshotTest {
             Message("busy-ask", Message.Role.USER, Message.Kind.TEXT, 16000.0, text = "Let's book the afternoon train."),
             Message("busy-narration", Message.Role.BOT, Message.Kind.TEXT, 16500.0, text = "Checking the fare before I book it.", turnId = "booking"),
             snapshot("live-plan", 17000.0, 1, 1, "booking"))
-        return (first + CompanionJson.decodeFromString<List<Message>>("""[{"id":"approval","role":"bot","kind":"options","at":18000,"card":{"title":"Book the afternoon train?","subtitle":"Saturday · 16:00 · €9","options":["Allow once","Deny"],"requestId":"showcase-approval","tool":"Bash"}}]"""))
-            .map { it.copy(at = 1791193200000.0 + it.at) }
+        val messages = first + CompanionJson.decodeFromString<List<Message>>("""[{"id":"approval","role":"bot","kind":"options","at":18000,"card":{"title":"Book the afternoon train?","subtitle":"Saturday · 16:00 · €9","options":["Allow once","Deny"],"requestId":"showcase-approval","tool":"Bash"}}]""")
+        return messages.mapIndexed { index, message ->
+            message.copy(at = 1791193200000.0 + message.at, parentId = messages.getOrNull(index - 1)?.id)
+        }
     }
     @Before fun start() {
         server = MockWebServer()
@@ -140,6 +147,8 @@ class ChatShowcaseScreenshotTest {
     @Test fun largeTypeRtlShowcase() = showcase(true, rtl = true, fontScale = 1.3f)
 
     private fun showcase(dark: Boolean, rtl: Boolean = false, fontScale: Float = 1f) {
+        // Dialog windows read the device configuration rather than only the activity's locals.
+        RuntimeEnvironment.setFontScale(fontScale)
         val fixture = bot(name = "Scout", busy = true).copy(title = "Your thoughtful travel companion", modelSelection = ModelSelection("instance-1", "Claude Sonnet 4.5"), messages = fixture())
         scene = WiringScene(Connection(id = "chat-showcase", name = "Synthetic showcase", host = "127.0.0.1", port = server.port), fleet = Fleet(listOf(fixture, bot("bot-2", "Pip")), emptyList())) {
             flow {
@@ -149,6 +158,8 @@ class ChatShowcaseScreenshotTest {
                 emitAll(updates)
             }
         }
+        val skin = if (dark) AppearanceSkin.MIDNIGHT else AppearanceSkin.LINEN
+        scene.environment.chatPreferences.setAppearanceSkin(skin)
         scene.environment.chatPreferences.setActivityDetail(ActivityDetail.FULL)
         scene.environment.chatPreferences.setShowWorkSummaries(true)
         scene.environment.chatPreferences.setQuickReplies(emptyList())
@@ -157,9 +168,9 @@ class ChatShowcaseScreenshotTest {
             CompositionLocalProvider(LocalCompanion provides scene.environment,
                 LocalLayoutDirection provides if (rtl) LayoutDirection.Rtl else LayoutDirection.Ltr,
                 LocalDensity provides Density(density.density, fontScale)) {
-            CompanionTheme(darkTheme = dark) {
+            CompanionTheme(skin = skin) {
                 val state by scene.session.state.collectAsState()
-                Surface(Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) {
+                Surface(Modifier.fillMaxSize()) {
                     if (state.bot(fixture.id) != null) ChatScreen(Destination.Chat(Chat.BotChat(fixture).target), {}, {}, {}, {})
                 }
             }
@@ -167,6 +178,9 @@ class ChatShowcaseScreenshotTest {
         compose.runOnIdle { scene.session.connect() }
         compose.waitUntil(5000) { scene.session.state.value.bot(fixture.id) != null && scene.session.state.value.reasoning[fixture.threadId] != null }
         compose.waitForIdle()
+        fixture.messages!!.filter { it.role == Message.Role.USER }.forEach { message ->
+            Assert.assertEquals(1, scene.session.state.value.versions(message, fixture.threadId).size)
+        }
         val suffix = if (rtl) "large-type-rtl" else if (dark) "dark" else "light"
         compose.onNodeWithTag("live-plan-strip").assertIsDisplayed()
         capture("showcase-busy-approval-$suffix")
@@ -183,9 +197,19 @@ class ChatShowcaseScreenshotTest {
         capture("showcase-jump-$suffix")
         compose.onNodeWithTag("jump-to-latest").performClick()
         compose.onNodeWithTag("jump-to-latest").assertDoesNotExist()
+        scroll(hasTestTag("message-approval"))
+        compose.onNodeWithTag("message-approval").assertIsDisplayed()
+        capture("showcase-approval-$suffix")
         compose.onNodeWithTag("live-plan-strip").performClick()
         compose.onNodeWithTag("plan-plan.live-plan").assertIsDisplayed()
+        scroll(hasTestTag("plan-plan.live-plan"))
+        compose.onNodeWithTag("live-plan-strip").assertIsDisplayed()
+        capture("showcase-live-plan-$suffix")
+        scroll(hasTestTag("thinking-row"))
         compose.onNodeWithTag("thinking-row").assertIsDisplayed()
+        compose.onNodeWithTag("thinking-row").assert(SemanticsMatcher.expectValue(SemanticsProperties.StateDescription, "Collapsed"))
+        compose.onNodeWithTag("thinking-panel").assertDoesNotExist()
+        capture("showcase-thinking-collapsed-$suffix")
         compose.onNode(hasSetTextAction()).performTextInput("@")
         compose.onNodeWithText("@Pip").assertIsDisplayed()
         capture("showcase-mention-$suffix")
@@ -193,6 +217,9 @@ class ChatShowcaseScreenshotTest {
         compose.onNodeWithTag("thinking-row").performClick()
         compose.onNodeWithTag("thinking-panel").assertIsDisplayed()
         compose.onNodeWithTag("thinking-panel").performScrollTo()
+        scroll(hasTestTag("thinking-row"))
+        compose.onNodeWithTag("thinking-panel").assertIsDisplayed()
+        compose.onNodeWithTag("thinking-row").assert(SemanticsMatcher.expectValue(SemanticsProperties.StateDescription, "Expanded"))
         capture("showcase-thinking-$suffix")
         compose.onNodeWithTag("thinking-row").performClick()
         scroll(hasTestTag("plan-plan.plan1"))
@@ -201,7 +228,7 @@ class ChatShowcaseScreenshotTest {
         capture("showcase-steps-$suffix")
         scroll(hasText("Ready for your weekend"))
         capture("showcase-markdown-$suffix")
-        scroll(hasText("DATA TABLE"))
+        scroll(hasTestTag("data-table"))
         capture("showcase-table-$suffix")
         scroll(hasTestTag("message-question"))
         capture("showcase-question-$suffix")
@@ -228,8 +255,11 @@ class ChatShowcaseScreenshotTest {
         scroll(hasTestTag("message-webhook"))
         capture("showcase-webhook-$suffix")
         scroll(hasTestTag("digest-line-digest"))
+        compose.onNodeWithTag("digest-line-digest").assertIsDisplayed()
+        capture("showcase-digest-line-$suffix")
         compose.onNodeWithTag("digest-line-digest").performClick()
         compose.onNodeWithTag("digest-sheet").assertIsDisplayed()
+        assertDigestVariant(fontScale, rtl)
         compose.onNodeWithText("$0.04").assertIsDisplayed()
         capture("showcase-digest-$suffix")
         compose.onNode(hasText("Copy") and hasAnyAncestor(hasTestTag("digest-sheet"))).performClick()
@@ -239,32 +269,59 @@ class ChatShowcaseScreenshotTest {
             Assert.assertTrue(clipboard.primaryClip!!.getItemAt(0).text.toString().contains("routes/coast.gpx"))
         }
         compose.onNodeWithText("Done").performClick()
+        scroll(hasTestTag("digest-line-quiet-digest"))
+        compose.onNodeWithTag("digest-line-quiet-digest").assertIsDisplayed()
+        capture("showcase-digest-line-success-$suffix")
         compose.runOnIdle { scene.environment.chatPreferences.setShowWorkSummaries(false) }
         scroll(hasText("Of course. I've saved it for next time."))
+        compose.onNodeWithTag("digest-line-quiet-digest").assertDoesNotExist()
         compose.onNodeWithText("Of course. I've saved it for next time.").performClick()
         compose.onNodeWithTag("message-meta-quiet-reply", useUnmergedTree = true).assertExists()
         capture("showcase-message-details-$suffix")
         compose.onNodeWithText("· What I did").performClick()
         compose.onNodeWithTag("digest-sheet").assertIsDisplayed()
+        assertDigestVariant(fontScale, rtl)
         compose.onNodeWithText("Done").performClick()
         compose.runOnIdle { scene.environment.chatPreferences.setActivityDetail(ActivityDetail.REDUCED) }
         scroll(hasTestTag("step-run-run.shell"))
+        compose.onNode(hasAnyAncestor(hasTestTag("step-run-run.shell")) and
+            SemanticsMatcher.expectValue(SemanticsProperties.StateDescription, "Collapsed")).assertIsDisplayed()
+        compose.onNodeWithTag("step-shell").assertDoesNotExist()
         capture("showcase-step-run-$suffix")
         compose.onNodeWithTag("step-run-run.shell").performClick()
         compose.onNodeWithTag("step-shell").assertExists()
+        scroll(hasTestTag("step-run-run.shell"))
+        compose.onNode(hasAnyAncestor(hasTestTag("step-run-run.shell")) and
+            SemanticsMatcher.expectValue(SemanticsProperties.StateDescription, "Expanded")).assertIsDisplayed()
         capture("showcase-step-timeline-$suffix")
         compose.runOnIdle { scene.environment.chatPreferences.setActivityDetail(ActivityDetail.HIDDEN) }
         compose.onNodeWithTag("thinking-row").assertDoesNotExist()
         compose.onNodeWithTag("live-status-line").assertIsDisplayed()
         capture("showcase-hidden-live-$suffix")
-        scroll(hasTestTag("chat-poster"))
+        scroll(hasTestTag("chat-poster"), clearance = 128.dp)
         capture("showcase-poster-$suffix")
     }
-    private fun scroll(matcher: SemanticsMatcher) {
-        compose.onNodeWithTag("chat-transcript").performScrollToNode(matcher)
+    private fun scroll(matcher: SemanticsMatcher, clearance: Dp = 148.dp) {
+        val transcript = compose.onNodeWithTag("chat-transcript", useUnmergedTree = true)
+        transcript.performScrollToNode(matcher)
         compose.waitForIdle()
+        // LazyColumn's visibility does not account for the floating header and its fade.
+        val targetTop = compose.onNode(matcher, useUnmergedTree = true).fetchSemanticsNode().positionInRoot.y
+        val clearTop = transcript.fetchSemanticsNode().positionInRoot.y + with(compose.density) { clearance.toPx() }
+        if (targetTop < clearTop) {
+            transcript.performSemanticsAction(SemanticsActions.ScrollBy) { it(0f, targetTop - clearTop) }
+            compose.waitForIdle()
+        }
+    }
+    private fun assertDigestVariant(fontScale: Float, rtl: Boolean) {
+        val layout = compose.onNodeWithTag("digest-sheet").fetchSemanticsNode().layoutInfo
+        Assert.assertEquals(compose.density.density, layout.density.density, 0.001f)
+        Assert.assertEquals(fontScale, layout.density.fontScale, 0.001f)
+        Assert.assertEquals(if (rtl) LayoutDirection.Rtl else LayoutDirection.Ltr, layout.layoutDirection)
     }
     private fun capture(name: String) {
+        compose.onAllNodesWithContentDescription(compose.activity.getString(R.string.mobile_previous_version_989537a3)).assertCountEquals(0)
+        compose.onAllNodesWithContentDescription(compose.activity.getString(R.string.mobile_next_version_514439d0)).assertCountEquals(0)
         compose.runOnIdle {
             val view = compose.activity.window.decorView
             val bitmap = Bitmap.createBitmap(view.width, view.height, Bitmap.Config.ARGB_8888)

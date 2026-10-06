@@ -810,4 +810,5 @@
     <plurals name="mobile_chat_failed_count"><item quantity="one">%d failed step</item><item quantity="other">%d failed steps</item></plurals>
     <plurals name="mobile_chat_memory_count"><item quantity="one">%d memory change</item><item quantity="other">%d memory changes</item></plurals>
     <string name="mobile_chat_jump_latest">Jump to latest message</string>
+    <string name="mobile_chat_copy_table_csv">Copy table as CSV</string>
 </resources>

@@ -120,7 +120,7 @@ not establish physical-device pairing, live webhook delivery, or HTTPS behavior.
 ## Contact-poster verification evidence
 
 - `./gradlew :core:test :app:testDebugUnitTest :app:assembleDebug` passes:
-  841 core tests and 1,157 app tests, with no failures or skips; the debug APK
+  841 core tests and 1,163 app tests, with no failures or skips; the debug APK
   assembles successfully.
 - Native light/dark captures cover every redesigned conversation component,
   including diffs and webhook tasks. The complete conversation and composer
@@ -134,3 +134,28 @@ not establish physical-device pairing, live webhook delivery, or HTTPS behavior.
 - All data, media, transport responses, and preferences are isolated synthetic
   fixtures. These checks do not establish physical-device pairing, real-engine
   delivery, or live audio playback.
+
+## Review-round separation and framing
+
+- Conversation surfaces derive from the actual transcript `background` role,
+  not the skin's card role. A minimum 1.20:1 light / 1.25:1 dark surface contrast
+  is enforced before choosing 4.5:1 contact ink and filled-action labels; the
+  existing eight-skin/mascot-colour matrix covers both rules.
+- The poster wash is confined to the top 260dp. A neutral backdrop remains
+  opaque through the measured header controls, then fades over the following
+  24dp; the wash is layered above this scrim and below the controls.
+- Native review captures use xxhdpi (1233 × 2673 for the 411 × 891dp viewport),
+  retain 1.3× RTL variants, and chain fixture parent IDs so ordinary user sends
+  do not falsely expose sibling-branch pagers.
+- Tables show only their data, subtle header fill, continuous row hairlines,
+  and a 48dp Copy table as CSV icon/custom action; there is no table kicker or
+  row-count chip.
+- Explicit review-state stems are `poster`, `plan`, `live-plan`, `step-run`,
+  `step-timeline`, `markdown`, `table`, `thinking-collapsed`, `thinking`,
+  `digest-line`, `digest-line-success`, `digest`, `message-details`, `approval`,
+  and `settings`; each uses the existing `showcase-<stem>-<variant>.png` naming.
+  Modal captures assert the intended density, font scale and RTL direction.
+- The review batch's full core/app suites and debug APK pass. All 93 native
+  review PNGs are regenerated at 1233 × 2673, including actual 1.3× font-scale
+  dialog captures. Representative light/dark/RTL captures were inspected for
+  surface edges, header occlusion, table copy/separators, and retained reasoning.

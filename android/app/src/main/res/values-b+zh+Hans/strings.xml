@@ -809,4 +809,5 @@
     <plurals name="mobile_chat_failed_count"><item quantity="other">%d 个失败步骤</item></plurals>
     <plurals name="mobile_chat_memory_count"><item quantity="other">%d 次记忆更改</item></plurals>
     <string name="mobile_chat_jump_latest">跳至最新消息</string>
+    <string name="mobile_chat_copy_table_csv">将表格复制为 CSV</string>
 </resources>

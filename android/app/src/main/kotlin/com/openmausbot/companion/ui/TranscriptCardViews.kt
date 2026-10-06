@@ -25,6 +25,7 @@ import androidx.compose.material.icons.filled.KeyboardArrowDown
 import androidx.compose.material.icons.filled.KeyboardArrowUp
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -39,7 +40,6 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.drawWithContent
-import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.graphics.compositeOver
 import androidx.compose.ui.graphics.Brush
 import com.openmausbot.companion.core.MarkdownTableAlignment
@@ -48,12 +48,14 @@ import androidx.compose.ui.layout.Layout
 import androidx.compose.ui.layout.MeasurePolicy
 import androidx.compose.ui.platform.LocalLayoutDirection
 import androidx.compose.ui.unit.LayoutDirection
-import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.ClipEntry
 import androidx.compose.ui.platform.LocalClipboard
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.painterResource
+import androidx.compose.ui.semantics.CustomAccessibilityAction
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.customActions
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.semantics.stateDescription
 import androidx.compose.ui.text.font.FontFamily
@@ -269,52 +271,35 @@ private fun DiffLine(line: String) {
  * children arrive row-major, which is the order the reader gets; the measure
  * pass then widens each column to its widest cell, which is the alignment iOS
  * gives up by handing every cell the same `minWidth` and letting them drift.
- * The rules come last on purpose, and this is the point the old comment here
- * made and it still holds: inside a horizontal scroll the incoming width is
- * unbounded and `fillMaxWidth` against an unbounded constraint measures zero,
- * so a rule is only as wide as its column if something measures the column
- * first and then hands it that width.
+ * The rules are measured after the cells, against the whole grid width including
+ * its column gutters. A horizontal scroller supplies unbounded width, so the
+ * grid must give those continuous separators their width explicitly.
  */
 @Composable
 fun DataTableCard(card: TranscriptCard.Table, modifier: Modifier = Modifier) {
     val copy = rememberCopy()
+    val copyCsv = { copy(card.csv()) }
+    val copyLabel = localizedMobileCopy("Copy table as CSV")
     val scroll = rememberScrollState()
     val fadeSurface = chatTint.inset.compositeOver(chatTint.theirs).compositeOver(MaterialTheme.colorScheme.surface)
     val rtl = LocalLayoutDirection.current == LayoutDirection.Rtl
 
-    Column(
+    Box(
         modifier = modifier
             .fillMaxWidth()
+            .testTag("data-table")
             .clip(RoundedCornerShape(12.dp))
             .background(chatTint.inset)
-            .padding(10.dp),
-        verticalArrangement = Arrangement.spacedBy(8.dp),
+            .semantics {
+                customActions = listOf(CustomAccessibilityAction(copyLabel) {
+                    copyCsv()
+                    true
+                })
+            },
     ) {
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.spacedBy(8.dp),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            Text(
-                text = stringResource(R.string.mobile_data_table_54baf78e),
-                fontSize = 12.sp,
-                fontWeight = FontWeight.Bold,
-                color = chatTint.ink,
-                modifier = Modifier.weight(1f),
-            )
-            Text(
-                text = if (card.rows.size == 1) "1 row" else "${card.rows.size} rows",
-                fontSize = 12.sp,
-                fontWeight = FontWeight.Medium,
-                color = secondaryTint,
-                modifier = Modifier
-                    .background(secondaryTint.copy(alpha = 0.14f), CircleShape)
-                    .padding(horizontal = 8.dp, vertical = 3.dp),
-            )
-        }
-
+        // Keep the fixed copy target out of the scrolling, selectable cells.
         SelectionContainer {
-            Box(Modifier.fillMaxWidth().drawWithContent {
+            Box(Modifier.fillMaxWidth().padding(end = MIN_TOUCH_TARGET).drawWithContent {
                 drawContent()
                 if (scroll.canScrollForward) drawRect(
                     Brush.horizontalGradient(if (rtl) listOf(fadeSurface, Color.Transparent) else listOf(Color.Transparent, fadeSurface),
@@ -327,11 +312,16 @@ fun DataTableCard(card: TranscriptCard.Table, modifier: Modifier = Modifier) {
                     modifier = Modifier.fillMaxWidth().horizontalScroll(scroll))
             }
         }
-
-        HorizontalDivider(color = secondaryTint.copy(alpha = 0.2f))
-
-        TextButton(onClick = { copy(card.csv()) }) {
-            Text(stringResource(R.string.mobile_copy_csv_b810b7cd), fontSize = 13.sp, color = chatTint.ink)
+        IconButton(
+            onClick = copyCsv,
+            modifier = Modifier.align(Alignment.TopEnd).size(MIN_TOUCH_TARGET),
+        ) {
+            Icon(
+                painter = painterResource(R.drawable.ic_tool_copy),
+                contentDescription = copyLabel,
+                modifier = Modifier.size(18.dp),
+                tint = chatTint.ink,
+            )
         }
     }
 }
@@ -339,12 +329,10 @@ fun DataTableCard(card: TranscriptCard.Table, modifier: Modifier = Modifier) {
 /**
  * The cells, in the order they are read: headings, then row by row.
  *
- * The children are emitted in three runs — the [headers], one rule per column,
- * then the body row-major — because that is the contract
- * [tableGridMeasurePolicy] measures against, and because the run that carries
- * meaning (headings, then rows) comes first and in reading order. The rules
- * carry no semantics at all, so where they sit among the children is a measuring
- * detail and nothing a screen reader ever stops on.
+ * A semantic-free header fill comes first, followed by all cells row-major,
+ * then one continuous separator before each body row. Only the cells carry
+ * meaning; the fill and rules get their final sizes from
+ * [tableGridMeasurePolicy] after the columns and row heights are known.
  */
 @Composable
 private fun DataGrid(
@@ -355,12 +343,12 @@ private fun DataGrid(
 ) {
     if (headers.isEmpty()) return
     val separator = MaterialTheme.colorScheme.outlineVariant
-    val ruleColour = secondaryTint.copy(alpha = 0.25f)
-    val headerFill = chatTint.inset.copy(alpha = (chatTint.inset.alpha * 2f).coerceAtMost(1f))
-    val headerHeight = with(LocalDensity.current) { MaterialTheme.typography.titleSmall.lineHeight.toPx() + 16.dp.toPx() }
     Layout(
-        modifier = modifier.drawBehind { drawRect(headerFill, size = androidx.compose.ui.geometry.Size(size.width, headerHeight)) },
+        modifier = modifier,
         content = {
+            // One additional inset over the container is subtly stronger, not
+            // a doubled overlay compounded over an already tinted surface.
+            Box(Modifier.background(chatTint.inset))
             headers.forEach { header ->
                 Text(
                     // Uppercased by the invariant rules, like every other
@@ -374,9 +362,6 @@ private fun DataGrid(
                     modifier = Modifier.padding(horizontal = 6.dp, vertical = 8.dp),
                 )
             }
-            repeat(headers.size) {
-                HorizontalDivider(color = ruleColour)
-            }
             rows.forEach { row ->
                 headers.indices.forEach { column ->
                     MarkdownInlineText(
@@ -387,15 +372,15 @@ private fun DataGrid(
                         text = row.getOrElse(column) { "" },
                         tail = false,
                         style = MaterialTheme.typography.bodyMedium.copy(fontFeatureSettings = "tnum"),
-                        modifier = Modifier.drawBehind {
-                            drawLine(separator, androidx.compose.ui.geometry.Offset(0f, size.height),
-                                androidx.compose.ui.geometry.Offset(size.width, size.height), strokeWidth = 0.5.dp.toPx())
-                        }.padding(horizontal = 6.dp, vertical = 8.dp),
+                        modifier = Modifier.padding(horizontal = 6.dp, vertical = 8.dp),
                     )
                 }
             }
+            repeat(rows.size) {
+                HorizontalDivider(thickness = 0.5.dp, color = separator)
+            }
         },
-        measurePolicy = tableGridMeasurePolicy(columnCount = headers.size, alignments = alignments),
+        measurePolicy = tableGridMeasurePolicy(columnCount = headers.size, rowCount = rows.size, alignments = alignments),
     )
 }
 
@@ -409,33 +394,29 @@ private val TABLE_ROW_GAP = 4.dp
 /**
  * Column widths from the content, row positions from the columns.
  *
- * Expects its children in the order [DataGrid] emits them: [columnCount]
- * headings, then [columnCount] rules, then the body cells row-major. Everything
- * but the rules is measured against no constraint at all — inside a horizontal
- * scroller there isn't one, and a cell that wrapped would stop being a cell —
- * and only then is each column's width known: the widest thing in it, floored at
- * [minColumnWidth]. The rules are measured last, each against the fixed width of
- * the column it underlines, which is the only way a rule inside an unbounded
- * width gets one.
+ * Expects a header fill, [columnCount] headings, the body cells row-major, and
+ * [rowCount] separators. Cells are measured without width constraints so a
+ * horizontal scroller never wraps them. Each column takes its widest cell,
+ * floored at [minColumnWidth]; the fill and separators then take the resolved
+ * full grid width, including every gutter. The fill takes the measured header
+ * height, so larger text never escapes its background.
  *
- * Internal rather than private so a test can drive this exact policy with its
- * own children and read back what each rule was given; the alternative was a
- * test tag in the drawing, which would put test scaffolding in front of a screen
- * reader for the sake of a measurement.
+ * Internal so tests can measure the production policy's actual columns, fill
+ * and continuous separators without adding test-only nodes to the card.
  */
 internal fun tableGridMeasurePolicy(
     columnCount: Int,
+    rowCount: Int,
     minColumnWidth: Dp = TABLE_MIN_COLUMN_WIDTH,
     columnGap: Dp = TABLE_COLUMN_GAP,
     rowGap: Dp = TABLE_ROW_GAP,
     alignments: List<MarkdownTableAlignment> = emptyList(),
 ): MeasurePolicy = MeasurePolicy { measurables, constraints ->
     require(columnCount > 0) { "a table with no columns has nothing to lay out" }
-    val rowCount = (measurables.size - columnCount * 2) / columnCount
     val unbounded = Constraints()
-    val headings = List(columnCount) { measurables[it].measure(unbounded) }
+    val headings = List(columnCount) { measurables[1 + it].measure(unbounded) }
     val cells = List(rowCount * columnCount) {
-        measurables[columnCount * 2 + it].measure(unbounded)
+        measurables[1 + columnCount + it].measure(unbounded)
     }
 
     val floor = minColumnWidth.roundToPx()
@@ -446,9 +427,6 @@ internal fun tableGridMeasurePolicy(
         }
         widest
     }
-    val rules = List(columnCount) {
-        measurables[columnCount + it].measure(Constraints.fixedWidth(widths[it]))
-    }
 
     val gutter = columnGap.roundToPx()
     val leading = rowGap.roundToPx()
@@ -458,14 +436,19 @@ internal fun tableGridMeasurePolicy(
         x[column] = pen
         pen += widths[column] + gutter
     }
-    val width = pen - gutter
-
-    val headingHeight = headings.maxOf { it.height }
-    val ruleY = headingHeight + leading
+    val width = constraints.constrainWidth(pen - gutter)
+    val headingHeight = maxOf(MIN_TOUCH_TARGET.roundToPx(), headings.maxOf { it.height })
+    val headerFill = measurables[0].measure(Constraints.fixed(width, headingHeight))
+    val rules = List(rowCount) {
+        measurables[1 + (rowCount + 1) * columnCount + it].measure(Constraints.fixedWidth(width))
+    }
+    val ruleY = IntArray(rowCount)
     val y = IntArray(rowCount)
-    var baseline = ruleY + rules.maxOf { it.height }
+    var baseline = headingHeight
     for (row in 0 until rowCount) {
         baseline += leading
+        ruleY[row] = baseline
+        baseline += rules[row].height + leading
         y[row] = baseline
         baseline += (0 until columnCount).maxOf { cells[row * columnCount + it].height }
     }
@@ -475,9 +458,10 @@ internal fun tableGridMeasurePolicy(
         MarkdownTableAlignment.CENTER -> (widths[column] - childWidth) / 2
         else -> 0
     }
-    layout(constraints.constrainWidth(width), constraints.constrainHeight(baseline)) {
-        headings.forEachIndexed { column, heading -> heading.placeRelative(alignedX(column, heading.width), 0) }
-        rules.forEachIndexed { column, rule -> rule.placeRelative(x[column], ruleY) }
+    layout(width, constraints.constrainHeight(baseline)) {
+        headerFill.placeRelative(0, 0)
+        headings.forEachIndexed { column, heading -> heading.placeRelative(alignedX(column, heading.width), (headingHeight - heading.height) / 2) }
+        rules.forEachIndexed { row, rule -> rule.placeRelative(0, ruleY[row]) }
         cells.forEachIndexed { index, cell ->
             cell.placeRelative(alignedX(index % columnCount, cell.width), y[index / columnCount])
         }

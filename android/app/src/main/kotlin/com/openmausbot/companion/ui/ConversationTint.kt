@@ -15,12 +15,19 @@ data class ConversationTint(val theirs: Color, val ink: Color, val glyphFill: Co
     val actionText: Color get() = if (contrast(Color.White, ink) >= 4.5f) Color.White else Color.Black
     companion object {
         fun create(color: Color, neutral: Color, dark: Boolean): ConversationTint {
-            val theirs = lerp(neutral, color, if (dark) 0.17f else 0.11f)
-            val target = if (dark) Color.White else Color.Black
+            val minimumSeparation = if (dark) 1.25f else 1.20f
+            var fill = if (dark) 0.17f else 0.11f
+            var theirs = lerp(neutral, color, fill)
+            val fillTarget = if (dark) color else lerp(color, Color.Black, 0.05f)
+            while (contrast(theirs, neutral) < minimumSeparation && fill < 1f) {
+                fill = (fill + 0.025f).coerceAtMost(1f)
+                theirs = lerp(neutral, fillTarget, fill)
+            }
+            val target = if (contrast(Color.White, theirs) > contrast(Color.Black, theirs)) Color.White else Color.Black
             var amount = if (dark) 0.25f else 0.20f
             var ink = lerp(color, target, amount)
-            while (contrast(ink, theirs) < 4.5f && amount < 0.70f) {
-                amount = (amount + 0.05f).coerceAtMost(0.70f)
+            while (contrast(ink, theirs) < 4.5f && amount < 1f) {
+                amount = (amount + 0.05f).coerceAtMost(1f)
                 ink = lerp(color, target, amount)
             }
             return ConversationTint(theirs, ink, ink.copy(alpha = if (dark) 0.20f else 0.14f),
@@ -39,7 +46,7 @@ internal val LocalConversationTint = compositionLocalOf<ConversationTint?> { nul
 internal fun conversationTint(color: String = "blue"): ConversationTint {
     val scheme = MaterialTheme.colorScheme
     return remember(color, scheme) {
-        ConversationTint.create(Color(MausPalette.argb(color)), scheme.surface, scheme.surface.luminance() < 0.5f)
+        ConversationTint.create(Color(MausPalette.argb(color)), scheme.background, scheme.background.luminance() < 0.5f)
     }
 }
 

@@ -174,6 +174,7 @@ private val localizedCopyResources = mapOf(
     "Copy" to R.string.mobile_copy_af74f7c5,
     "Copy all" to R.string.mobile_copy_all_9da9f044,
     "Copy CSV" to R.string.mobile_copy_csv_b810b7cd,
+    "Copy table as CSV" to R.string.mobile_chat_copy_table_csv,
     "Copy Diff" to R.string.mobile_copy_diff_18f2296a,
     "Could not open the cloud desktop." to R.string.mobile_cloud_desktop_open_failed,
     "Couldn't add that attachment." to R.string.mobile_chat_add_attachment_failed,

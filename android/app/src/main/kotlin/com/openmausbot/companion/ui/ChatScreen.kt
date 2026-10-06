@@ -70,6 +70,7 @@ import androidx.compose.foundation.interaction.DragInteraction
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material.icons.filled.KeyboardArrowDown
+import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.CompositionLocalProvider
@@ -919,6 +920,7 @@ private fun LoadedChat(
     Box(
         modifier = Modifier
             .fillMaxSize()
+            .background(MaterialTheme.colorScheme.background)
             .horizontalBackSwipe(onBack = { latestBackBySwipe.value() }),
     ) {
         Column(modifier = Modifier.fillMaxSize()) {
@@ -1382,8 +1384,16 @@ private fun ChatHeader(
     modifier: Modifier = Modifier,
 ) {
     val wash = chatTint.wash
-    val headerSurface = wash.compositeOver(MaterialTheme.colorScheme.surface)
+    val background = MaterialTheme.colorScheme.background
+    val density = androidx.compose.ui.platform.LocalDensity.current
+    var controlsHeight by remember(density) { mutableStateOf(116.dp) }
     Box(modifier = modifier.fillMaxWidth()) {
+        // Opaque through the actual controls; only the 24dp below them fades.
+        Spacer(Modifier.fillMaxWidth().height(controlsHeight + 24.dp).drawWithCache {
+            val solidThrough = ((size.height - 24.dp.toPx()) / size.height).coerceIn(0f, 1f)
+            val brush = Brush.verticalGradient(0f to background, solidThrough to background, 1f to Color.Transparent)
+            onDrawBehind { drawRect(brush) }
+        })
         Spacer(
             modifier = Modifier
                 .fillMaxWidth()
@@ -1396,11 +1406,6 @@ private fun ChatHeader(
                     onDrawBehind { drawRect(brush) }
                 },
         )
-        // Preserve an opaque reading surface under the controls as content scrolls.
-        Spacer(Modifier.fillMaxWidth().height(116.dp).drawWithCache {
-            val brush = Brush.verticalGradient(0f to headerSurface, 0.7f to headerSurface, 1f to Color.Transparent)
-            onDrawBehind { drawRect(brush) }
-        })
 
         Row(
             modifier = Modifier
@@ -1433,6 +1438,7 @@ private fun ChatHeader(
         Column(
             modifier = Modifier
                 .align(Alignment.TopCenter)
+                .onSizeChanged { controlsHeight = with(density) { it.height.toDp() } }
                 .padding(top = 2.dp),
             horizontalAlignment = Alignment.CenterHorizontally,
             verticalArrangement = Arrangement.spacedBy(6.dp),
