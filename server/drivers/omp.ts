@@ -8,9 +8,9 @@
 //   extension dialogs (approvals, the OpenMausBot extension's host gates).
 // - Sessions persist in omp's own store. The resume cursor is the session file
 //   `get_state` reports after `new_session`; later turns `switch_session` to
-//   it. omp starts a blank session at any path it is handed, so a missing file
-//   is a refused resume: the turn rebuilds from recoveryText or fails, never
-//   runs blank (capabilities.strictResume).
+//   it, bound to the picked model. omp starts a blank session at any path it
+//   is handed, so a missing file is a refused resume: the turn rebuilds from
+//   recoveryText or fails, never runs blank (capabilities.strictResume).
 // - A prompt completes on its `prompt_result`; when background work was still
 //   pending at that yield, the turn stays open until `session_settled`.
 // - Per-bot approval levels map onto `--approval-mode`, and omp's Approve/Deny
@@ -83,11 +83,30 @@ const DRIVER_KIND = "ompAgent";
 const OMP_TURN_ARGS = ["--mode", "rpc-ui"];
 const OMP_CATALOG_ARGS = ["--mode", "rpc", "--no-session"];
 const OMP_MODEL_REFRESH_ARGS = ["models", "refresh"];
-/** Protocol v2 already exists in 18.1.18; 18.4.9 added set_ask_dialog,
- * structured ask answers and dialog cancellation; 18.3.1 added
- * prompt_result.status/sessionSettled and session_settled.
- * Every command we send exists at this floor; none is an optional probe. */
-const MIN_OMP_VERSION: readonly [number, number, number] = [18, 4, 9];
+/** Protocol v2 already exists in 18.1.18; 18.3.1 added
+ * prompt_result.status/sessionSettled and session_settled; 18.4.9 added
+ * set_ask_dialog, structured ask answers and dialog cancellation. 18.6.3
+ * made switch_session refuse a session whose saved model cannot be restored
+ * unless the request names the model to bind, and added
+ * abort_and_restore_queue, the Stop that does not run queued input. Every
+ * command we send exists at this floor; none is an optional probe. */
+const MIN_OMP_VERSION: readonly [number, number, number] = [18, 6, 3];
+/** The session events the turn reads. set_event_filter forwards only these,
+ * and message_update as the token delta alone: by default every update also
+ * carries the reply so far, twice, which made a long reply quadratic bytes
+ * for the server to parse. */
+const OMP_SESSION_EVENTS = [
+  "message_update",
+  "message_end",
+  "tool_execution_start",
+  "tool_execution_end",
+  "auto_compaction_start",
+  "auto_compaction_end",
+] as const;
+/** How omp refuses a model-bound switch_session over the model itself:
+ * `Model not found: provider/id` (not in its catalog) or `No API key for
+ * provider/id` (no credential). The session itself is fine. */
+const OMP_MODEL_REFUSAL = /^(Model not found: |No API key for )/;
 /** Same backstop as pi: the full prompt rides again after this many bare
  * turns even when no compaction event announced a history rewrite. */
 const OMP_PROMPT_RE_ANCHOR_TURNS = 8;
@@ -271,6 +290,14 @@ const OmpFrameSchema = z.union([
   z.object({ type: z.enum(["auto_compaction_start", "auto_compaction_end"]) }),
 ]);
 type OmpFrame = z.infer<typeof OmpFrameSchema>;
+/** Every session event the turn handles must pass the event filter; a frame
+ * type added above without joining OMP_SESSION_EVENTS fails the type check. */
+type OmpUnfilteredFrame = Exclude<
+  OmpFrame["type"],
+  "response" | "extension_ui_request" | "prompt_result" | "session_settled" | (typeof OMP_SESSION_EVENTS)[number]
+>;
+const ompSessionEventsForwarded: [OmpUnfilteredFrame] extends [never] ? true : never = true;
+void ompSessionEventsForwarded;
 
 const count = (value: unknown): number => (typeof value === "number" && Number.isFinite(value) && value > 0 ? value : 0);
 
@@ -809,8 +836,12 @@ export const OmpDriver: ProviderDriver<OmpConfig> = {
 
       const stop = () => {
         if (settled) return;
+        // A plain abort leaves steering omp has not consumed in its queue,
+        // where omp's post-abort drain can still run it as a new turn. This
+        // withdraws that input first; the harness offers withdrawn messages
+        // again with the next turn.
         try {
-          send({ type: "abort", id: `abort:${++seq}` });
+          send({ type: "abort_and_restore_queue", id: `abort:${++seq}` });
         } catch {
           /* ignore */
         }
@@ -1126,13 +1157,21 @@ export const OmpDriver: ProviderDriver<OmpConfig> = {
       emit({ ...base(threadId, turnId), type: "turn.started" });
 
       try {
-        // Even the 18.4.9 floor supports v2. Wait for its acknowledgement
+        // Every supported omp speaks v2. Wait for its acknowledgement
         // before requesting anything that could exceed the v1 frame limit.
         OmpProtocol.parse(await request({ type: "negotiate_protocol", protocolVersion: 2 }).answered);
         // Every supported omp has set_ask_dialog; refusal is a real setup
         // failure, not an optional probe with a legacy select fallback.
         await request({ type: "set_ask_dialog", enabled: true }).answered;
+        // Only the events read below, token deltas without the reply-so-far
+        // snapshots. Frames stay readable unfiltered, so a refusal costs
+        // bandwidth, not the turn.
+        await request({ type: "set_event_filter", events: [...OMP_SESSION_EVENTS], messageUpdates: "delta" })
+          .answered.catch(() => undefined);
 
+        // The picked model must be the one that runs: a refused pick fails
+        // the turn instead of quietly spending on omp's default.
+        const chosen = typeof turn.model === "string" ? splitPiModel(turn.model) : null;
         const cursor = !turn.sessionReset && typeof turn.resumeCursor === "string" && turn.resumeCursor ? turn.resumeCursor : null;
         let resumed = false;
         let rebuilt = false;
@@ -1143,12 +1182,27 @@ export const OmpDriver: ProviderDriver<OmpConfig> = {
           let refused = !existsSync(cursor);
           if (!refused) {
             try {
-              const switched = OmpSessionChange.parse(await request({ type: "switch_session", sessionPath: cursor }).answered);
+              // Bound to the picked model: omp refuses to reopen a session
+              // whose saved model it can no longer restore unless the switch
+              // names the model to continue on, and that refusal used to
+              // throw away omp's own history for a replay.
+              const switched = OmpSessionChange.parse(await request({
+                type: "switch_session",
+                sessionPath: cursor,
+                ...(chosen ? { provider: chosen.provider, modelId: chosen.modelId } : {}),
+              }).answered);
               const state = OmpState.parse(await request({ type: "get_state" }).answered);
               refused = switched.cancelled || state.sessionFile !== cursor;
               resumed = !refused;
             } catch (error) {
               if (!(error instanceof OmpRpcRefusalError)) throw error;
+              // The picked model is what failed, not the session: replacing
+              // the session would lose its history over a model that may be
+              // back after `omp login`. Keep the cursor and fail the turn.
+              if (chosen && OMP_MODEL_REFUSAL.test(error.message)) {
+                fail(`omp cannot run ${turn.model}: ${error.message}. Pick another model, or sign in with \`omp login\`.`);
+                return { turnId };
+              }
               refused = true;
             }
           }
@@ -1180,9 +1234,6 @@ export const OmpDriver: ProviderDriver<OmpConfig> = {
           ...(rebuilt ? { rebuilt: true } : {}),
         });
 
-        // The picked model must be the one that runs: a refused pick fails
-        // the turn instead of quietly spending on omp's default.
-        const chosen = typeof turn.model === "string" ? splitPiModel(turn.model) : null;
         if (chosen) {
           try {
             await request({ type: "set_model", provider: chosen.provider, modelId: chosen.modelId }).answered;
@@ -1299,7 +1350,7 @@ export const OmpDriver: ProviderDriver<OmpConfig> = {
           // Known without a network check: this omp cannot run a turn at all.
           update: {
             title: `Update omp to ${floor} or newer`,
-            message: `omp ${version.version} predates the prompt lifecycle and question dialogs OpenMausBot relies on. Update it, then refresh Engines.`,
+            message: `omp ${version.version} predates the session resume and Stop that OpenMausBot relies on. Update it, then refresh Engines.`,
             command: ompUpdateCommand(config.cli),
           },
         };
