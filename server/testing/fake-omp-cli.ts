@@ -1,12 +1,13 @@
 #!/usr/bin/env node
-// Scripted omp RPC fake; its frames follow the omp 18.5.1 wire schema.
+// Scripted omp RPC fake; its frames follow the omp 18.8.0 wire schema.
 // Prompt admission and completion are separate (prompt_result/session_settled).
 // FAKE_OMP_MODE additionally supports confirm/input/select, late-frames,
 // delayed-exit, stall-exit and malformed-result.
 // FAKE_OMP_DUMP appends launches, commands and lifecycle checkpoints as JSONL.
 // FAKE_OMP_MODELS_FILE allows deterministic catalog changes between probes.
 // FAKE_OMP_EXIT_GATE releases a delayed EOF flush when that file is created.
-// FAKE_OMP_SWITCH_CANCEL / FAKE_OMP_SWITCH_MISMATCH exercise refused resumes.
+// FAKE_OMP_SWITCH_CANCEL / FAKE_OMP_SWITCH_MISMATCH exercise refused resumes;
+// FAKE_OMP_SAVED_MODEL_GONE refuses a switch that names no model to bind.
 // FAKE_OMP_FRAME_LIMIT lowers the physical stdout cap for transport contracts.
 // corrupt-catalog/corrupt-turn use FAKE_OMP_CHUNK_FAULT to damage a sequence.
 // Async work is deliberately held until a steer arrives, so tests control the
@@ -58,7 +59,7 @@ dump({
   mcpConfig: rawConfig,
 });
 if (argv.includes("--version")) {
-  process.stdout.write((process.env.FAKE_OMP_VERSION ?? "omp/18.4.12") + "\n");
+  process.stdout.write((process.env.FAKE_OMP_VERSION ?? "omp/18.8.0") + "\n");
   process.exit(0);
 }
 if (argv[0] === "models" && argv[1] === "refresh") process.exit(0);
@@ -80,8 +81,17 @@ let protocolVersion = 1;
 let chunkCounter = 0;
 let outputClosed = false;
 const writeFrame = (frame: Record<string, unknown>) => process.stdout.write(JSON.stringify(frame) + "\n");
+// set_event_filter, as omp applies it: session events outside the filter are
+// dropped; RPC protocol frames always pass.
+const RPC_FRAMES: Record<string, true> = {
+  ready: true, response: true, prompt_result: true, session_settled: true, extension_ui_request: true, rpc_frame_error: true,
+};
+let eventFilter: Set<string> | null = null;
+let messageUpdates = "full";
 const send = (frame: Record<string, unknown>) => {
   if (outputClosed) return;
+  const type = String(frame.type);
+  if (eventFilter && !RPC_FRAMES[type] && !eventFilter.has(type)) return;
   const json = JSON.stringify(frame);
   const byteLength = Buffer.byteLength(json);
   if (byteLength + 1 <= frameLimit) { writeFrame(frame); return; }
@@ -138,10 +148,11 @@ const assistant = (usage = { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, t
   role: "assistant", content: [], api: "anthropic-messages", provider: "anthropic", model: "claude-sonnet",
   usage, stopReason: "stop", timestamp: Date.now(),
 });
-const delta = (text: string, type = "text_delta") => send({
-  type: "message_update", message: assistant(),
-  assistantMessageEvent: { type, contentIndex: 0, delta: text, partial: assistant() },
-});
+// "delta" message updates carry the increment alone, without the reply-so-far
+// snapshot omp otherwise sends as both `message` and the event's `partial`.
+const delta = (text: string, type = "text_delta") => send(messageUpdates === "delta"
+  ? { type: "message_update", message: { role: "assistant" }, assistantMessageEvent: { type, contentIndex: 0, delta: text } }
+  : { type: "message_update", message: assistant(), assistantMessageEvent: { type, contentIndex: 0, delta: text, partial: assistant() } });
 let sessionFile: string | null = null;
 const sessionId = randomUUID();
 let model = models[0];
@@ -310,6 +321,21 @@ process.stdin.on("end", () => {
   if (existsSync(gate)) { watcher.close(); finish(); }
 });
 
+/** The model `set_model` or a bound `switch_session` names: one in the
+ * catalog, or the turn's registered local host. */
+function resolveModel(cmd: Command): (typeof models)[number] | undefined {
+  if (typeof cmd.provider !== "string" || typeof cmd.modelId !== "string") return undefined;
+  const listed = models.find((entry) => entry.provider === cmd.provider && entry.id === cmd.modelId);
+  if (listed) return listed;
+  if (localProvider?.name !== cmd.provider || localProvider?.model !== cmd.modelId) return undefined;
+  return {
+    provider: cmd.provider, id: cmd.modelId, name: cmd.modelId,
+    api: "openai-completions", baseUrl: "http://127.0.0.1:11434/v1", reasoning: false,
+    input: ["text"], cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+    contextWindow: 128_000, maxTokens: 8192,
+  };
+}
+
 function handle(cmd: Command) {
   dump({ command: cmd });
   switch (cmd.type) {
@@ -324,6 +350,11 @@ function handle(cmd: Command) {
       if (mode === "ask-refuse") refuse(cmd, "Structured ask dialog unavailable");
       else reply(cmd, { enabled: true });
       return;
+    case "set_event_filter":
+      eventFilter = Array.isArray(cmd.events) ? new Set(cmd.events.map(String)) : null;
+      messageUpdates = cmd.messageUpdates === "delta" ? "delta" : "full";
+      reply(cmd, { events: Array.isArray(cmd.events) ? cmd.events : null, messageUpdates });
+      return;
     case "new_session": {
       const directory = process.env.FAKE_OMP_SESSION_DIR ?? tmpdir();
       mkdirSync(directory, { recursive: true });
@@ -332,20 +363,26 @@ function handle(cmd: Command) {
       reply(cmd, { cancelled: false });
       return;
     }
-    case "switch_session":
-      if (process.env.FAKE_OMP_SWITCH_REFUSE === "1") refuse(cmd, "Session unavailable");
-      else if (process.env.FAKE_OMP_SWITCH_CANCEL === "1") reply(cmd, { cancelled: true });
-      else if (process.env.FAKE_OMP_SWITCH_MISMATCH === "1") reply(cmd, { cancelled: false });
-      else {
-        if (typeof cmd.sessionPath !== "string") throw new Error("Missing session path");
-        sessionFile = cmd.sessionPath;
-        if (mode === "delayed-exit") {
-          process.env.FAKE_OMP_RESUMED_HISTORY = readFileSync(sessionFile, "utf8");
-          if (!process.env.FAKE_OMP_RESUMED_HISTORY) { refuse(cmd, "Session was not flushed"); return; }
-        }
-        reply(cmd, { cancelled: false });
+    case "switch_session": {
+      if (process.env.FAKE_OMP_SWITCH_REFUSE === "1") { refuse(cmd, "Session unavailable"); return; }
+      if (process.env.FAKE_OMP_SWITCH_CANCEL === "1") { reply(cmd, { cancelled: true }); return; }
+      if (process.env.FAKE_OMP_SWITCH_MISMATCH === "1") { reply(cmd, { cancelled: false }); return; }
+      if (typeof cmd.sessionPath !== "string") throw new Error("Missing session path");
+      // 18.6.3: a named model binds the session (validated like set_model);
+      // without one, a saved model omp cannot restore refuses the switch.
+      const bound = cmd.provider !== undefined || cmd.modelId !== undefined;
+      const binding = bound ? resolveModel(cmd) : undefined;
+      if (bound && !binding) { refuse(cmd, `Model not found: ${String(cmd.provider)}/${String(cmd.modelId)}`); return; }
+      if (!bound && process.env.FAKE_OMP_SAVED_MODEL_GONE === "1") { refuse(cmd, "Could not restore model retired/model"); return; }
+      if (binding) model = binding;
+      sessionFile = cmd.sessionPath;
+      if (mode === "delayed-exit") {
+        process.env.FAKE_OMP_RESUMED_HISTORY = readFileSync(sessionFile, "utf8");
+        if (!process.env.FAKE_OMP_RESUMED_HISTORY) { refuse(cmd, "Session was not flushed"); return; }
       }
+      reply(cmd, { cancelled: false });
       return;
+    }
     case "get_state": {
       const state = { ...(sessionFile ? { sessionFile } : {}), sessionId, ...(model ? { model } : {}) };
       dump({ state });
@@ -355,19 +392,13 @@ function handle(cmd: Command) {
     case "get_available_models":
       reply(cmd, { models });
       return;
-    case "set_model":
-      if (typeof cmd.provider === "string" && typeof cmd.modelId === "string"
-        && (models.some((entry) => entry.provider === cmd.provider && entry.id === cmd.modelId)
-          || (localProvider?.name === cmd.provider && localProvider?.model === cmd.modelId))) {
-        model = models.find((entry) => entry.provider === cmd.provider && entry.id === cmd.modelId) ?? {
-          provider: cmd.provider, id: cmd.modelId, name: cmd.modelId,
-          api: "openai-completions", baseUrl: "http://127.0.0.1:11434/v1", reasoning: false,
-          input: ["text"], cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
-          contextWindow: 128_000, maxTokens: 8192,
-        };
-        reply(cmd, model);
-      } else refuse(cmd, "Model not found");
+    case "set_model": {
+      const chosen = resolveModel(cmd);
+      if (!chosen) { refuse(cmd, `Model not found: ${String(cmd.provider)}/${String(cmd.modelId)}`); return; }
+      model = chosen;
+      reply(cmd, model);
       return;
+    }
     case "set_thinking_level":
       reply(cmd);
       return;
@@ -387,8 +418,9 @@ function handle(cmd: Command) {
         }
       }
       return;
-    case "abort":
-      reply(cmd);
+    case "abort_and_restore_queue":
+      // Nothing the fake queues outlives a turn; the queue comes back empty.
+      reply(cmd, { steering: [], followUp: [] });
       if (promptId) result("aborted");
       if (mode === "late-frames") {
         delta("Late content");

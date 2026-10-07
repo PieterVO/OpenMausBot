@@ -19,9 +19,11 @@ driver uses `omp --mode rpc-ui`, not ACP or pi's RPC protocol.
 2. Sign in with `omp login`.
 3. Restart OpenMausBot and choose **omp** in the model picker.
 
-Requires **omp 18.4.9 or newer**: 18.3.1 added the terminal prompt status,
+Requires **omp 18.6.3 or newer**: 18.3.1 added the terminal prompt status,
 `sessionSettled` flag and `session_settled` event; 18.4.9 added `set_ask_dialog`,
-whole-question `ask` answers and expired-dialog cancellation notifications.
+whole-question `ask` answers and expired-dialog cancellation notifications;
+18.6.3 lets `switch_session` bind a session to a model (and refuses one whose
+saved model cannot be restored without it) and added `abort_and_restore_queue`.
 The driver relies on all of these, not just the older `agentInvoked` flag.
 An older CLI is reported unavailable with its update command. When npm publishes
 a newer stable `@oh-my-pi/pi-coding-agent`,
@@ -90,12 +92,23 @@ or shell sandbox.
 
 OpenMausBot starts one rpc-ui process per turn. Conversations persist in omp's
 own session store (`~/.omp/agent/sessions`, respecting `PI_CODING_AGENT_DIR` and
-profiles), and resume with `switch_session`. A cancelled switch or a different
-`get_state.sessionFile` is a refused resume, just like a missing session file:
-OpenMausBot rebuilds from its transcript or fails rather than starting blank.
-A queued turn waits for its predecessor's process to close and flush the session
-before opening it. Stop ignores later frames; shutdown kills owned process trees
-without relying on a delayed timer. Mid-turn messages steer through `steer`.
+profiles), and resume with `switch_session`, bound to the picked model: a
+session whose saved model omp no longer offers (a renamed provider, a removed
+model) continues on the picked one with its history. When the picked model
+itself is what omp refuses (`Model not found`, `No API key for`), the turn fails
+with that reason and the session is kept for the next turn. A cancelled switch
+or a different `get_state.sessionFile` is a refused resume, just like a missing
+session file: OpenMausBot rebuilds from its transcript or fails rather than
+starting blank. A queued turn waits for its predecessor's process to close and
+flush the session before opening it. Mid-turn messages steer through `steer`.
+Stop sends `abort_and_restore_queue`: steering omp has not yet consumed is
+withdrawn first, so omp's post-abort queue drain cannot run it, and OpenMausBot
+offers those messages again with the next turn. Stop ignores later frames; shutdown kills
+owned process trees without relying on a delayed timer.
+
+Each turn asks omp, with `set_event_filter`, for only the session events the
+driver reads, and for token deltas without the accumulated reply that omp
+otherwise repeats twice in every `message_update`.
 
 Turn completion follows `prompt_result`. Whenever `sessionSettled` is false,
 OpenMausBot waits for `session_settled`, including failed and aborted prompts, so
@@ -124,6 +137,6 @@ OpenMausBot extension is shared with pi, so `server/drivers/pi-mcp-extension.tes
 covers it for both engines.
 
 The driver's consumed command, response and event fields are checked against
-omp **18.5.1**'s generated `rpc-wire.schema.json` and TypeScript wire definitions.
+omp **18.8.0**'s generated `rpc-wire.schema.json` and TypeScript wire definitions.
 Transport contracts cover v2 negotiation, large UTF-8 frames, corrupt chunk
 sequences and overflow failures against the dependency-free fake CLI.

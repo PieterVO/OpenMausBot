@@ -404,6 +404,28 @@ describe("OmpDriver contract (fake CLI)", () => {
     expect(commands.filter((command) => command.type === "switch_session")).toEqual([{ type: "switch_session", id: expect.any(String), sessionPath: cursor }]);
   });
 
+  it("reopens a session whose saved model omp can no longer restore by binding the picked model", async () => {
+    await create("happy", { FAKE_OMP_SAVED_MODEL_GONE: "1" });
+    const cursor = join(directory, "saved-model-gone.jsonl");
+    writeFileSync(cursor, "");
+    const turnId = await run({ threadId: "rebind", text: "continue", model: "anthropic/claude-sonnet", resumeCursor: cursor, recoveryText: "Earlier conversation" });
+    expect(sessionFor(turnId)).toBe(cursor);
+    expect(recorder.events.find((event) => event.type === "session.started")).not.toHaveProperty("rebuilt");
+    expect(readDump(dump).find((row) => row.command?.type === "prompt")?.command?.message).not.toContain("Earlier conversation");
+    expect(recorder.events.at(-1)).toMatchObject({ ok: true });
+  });
+
+  it("fails a turn whose picked model omp cannot run without replacing the conversation's session", async () => {
+    await create();
+    const cursor = join(directory, "kept.jsonl");
+    writeFileSync(cursor, "");
+    await run({ threadId: "kept", text: "continue", model: "anthropic/not-a-model", resumeCursor: cursor, recoveryText: "Earlier conversation" });
+    expect(recorder.events.find((event) => event.type === "runtime.error")).toMatchObject({ message: expect.stringMatching(/anthropic\/not-a-model.*Model not found/) });
+    expect(recorder.events.some((event) => event.type === "session.started")).toBe(false);
+    expect(readDump(dump).some((row) => ["new_session", "prompt"].includes(row.command?.type ?? ""))).toBe(false);
+    expect(recorder.events.at(-1)).toMatchObject({ ok: false });
+  });
+
   it.each(["FAKE_OMP_SWITCH_CANCEL", "FAKE_OMP_SWITCH_MISMATCH"])("rebuilds a refused resume from %s rather than trusting a successful response", async (flag) => {
     await create("happy", { [flag]: "1" });
     const cursor = join(directory, "vetoed.jsonl");
@@ -512,11 +534,11 @@ describe("OmpDriver contract (fake CLI)", () => {
     expect(recorder.events.slice(-2)).toMatchObject([{ type: "runtime.error", message: "Provider quota exhausted" }, { type: "turn.completed", ok: false, stopReason: "failed" }]);
   });
 
-  it("interrupts an admitted turn, sends abort and reports cancellation exactly once", async () => {
+  it("interrupts an admitted turn without running its queued input and reports cancellation exactly once", async () => {
     await create("editor");
     await instance.adapter.sendTurn({ threadId: "interrupt", text: "go" });
     await recorder.until((event) => event.type === "request.opened");
-    const delivered = untilDump(dump, (row) => row.command?.type === "abort");
+    const delivered = untilDump(dump, (row) => row.command?.type === "abort_and_restore_queue");
     await instance.adapter.interruptTurn("interrupt");
     const done = await recorder.until((event) => event.type === "turn.completed");
     await delivered;
@@ -742,7 +764,7 @@ describe("OmpDriver contract (fake CLI)", () => {
     expect(recorder.events.at(-1)).toMatchObject({ ok: false });
   });
 
-  it.each(["omp/18.3.0", "omp v18.2.99", "omp/18.4.8", "omp/18.4.9-beta.1"])("rejects old version %s and offers the configured omp's own update", async (version) => {
+  it.each(["omp/18.4.12", "omp v18.5.1", "omp/18.6.1", "omp/18.6.3-beta.1"])("rejects old version %s and offers the configured omp's own update", async (version) => {
     await create("happy", { FAKE_OMP_VERSION: version });
     expect(await instance.snapshot()).toMatchObject({
       state: "unavailable",
@@ -753,18 +775,18 @@ describe("OmpDriver contract (fake CLI)", () => {
   });
 
   it("offers an update only when npm publishes a newer stable omp", async () => {
-    release.latest = "18.5.0";
-    await create("happy", { FAKE_OMP_VERSION: "omp/18.4.12 (fake)" });
+    release.latest = "18.8.0";
+    await create("happy", { FAKE_OMP_VERSION: "omp/18.7.0 (fake)" });
     expect(await instance.snapshot()).toMatchObject({
       state: "available",
-      update: { title: "Update omp to 18.5.0", command: ompUpdateCommand(FAKE_CLI) },
+      update: { title: "Update omp to 18.8.0", command: ompUpdateCommand(FAKE_CLI) },
     });
     await instance.dispose();
-    await create("happy", { FAKE_OMP_VERSION: "omp/18.5.0" });
+    await create("happy", { FAKE_OMP_VERSION: "omp/18.8.0" });
     expect(await instance.snapshot()).not.toHaveProperty("update");
     release.latest = null;
     await instance.dispose();
-    await create("happy", { FAKE_OMP_VERSION: "omp/18.4.12" });
+    await create("happy", { FAKE_OMP_VERSION: "omp/18.7.0" });
     expect(await instance.snapshot()).not.toHaveProperty("update");
   });
 
@@ -776,7 +798,7 @@ describe("OmpDriver contract (fake CLI)", () => {
     expect(recorder.events.at(-1)).toMatchObject({ ok: false });
   });
 
-  it.each([["omp/18.4.9", true], ["omp/18.4.12", false]] as const)("reports supported version %s with authenticated=%s from omp's own catalog", async (version, authenticated) => {
+  it.each([["omp/18.6.3", true], ["omp/18.8.0", false]] as const)("reports supported version %s with authenticated=%s from omp's own catalog", async (version, authenticated) => {
     await create("happy", { FAKE_OMP_VERSION: version, ...(authenticated ? {} : { FAKE_OMP_MODELS: "[]" }) });
     expect(await instance.snapshot()).toEqual({ state: "available", version, authenticated });
   });
